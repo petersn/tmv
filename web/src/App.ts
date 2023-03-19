@@ -49,7 +49,6 @@ async function main() {
     
     console.log('All resources loaded');
     gameState = new GameState(resources);
-    gameState.setup();
     window.requestAnimationFrame(rafLoop);
   });
 }

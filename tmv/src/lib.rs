@@ -2,6 +2,7 @@ use std::{collections::{HashMap, HashSet}, rc::Rc};
 
 use js_sys::Array;
 use math::{Vec2, Rect};
+use physics::Collision;
 use tile_rendering::TileRenderer;
 use strum::IntoEnumIterator;
 use wasm_bindgen::prelude::*;
@@ -11,6 +12,7 @@ use game_maps::GameMap;
 pub mod game_maps;
 pub mod tile_rendering;
 pub mod math;
+pub mod physics;
 
 const UI_LAYER: usize = 0;
 const MAIN_LAYER: usize = 1;
@@ -119,30 +121,21 @@ struct DrawContext {
 #[wasm_bindgen]
 pub struct GameState {
   resources:    HashMap<String, Vec<u8>>,
-  draw_context: Option<DrawContext>,
+  draw_context: DrawContext,
   keys_held:    HashSet<String>,
   camera_pos:   Vec2,
+  collision:    Collision,
+  player_pos:   Vec2,
+  player_vel:   Vec2,
 }
 
 #[wasm_bindgen]
 impl GameState {
   #[wasm_bindgen(constructor)]
-  pub fn new(resources: JsValue) -> Self {
+  pub fn new(resources: JsValue) -> Result<GameState, JsValue> {
     console_error_panic_hook::set_once();
     let resources = serde_wasm_bindgen::from_value(resources).unwrap();
-    Self {
-      resources,
-      draw_context: None,
-      keys_held: HashSet::new(),
-      camera_pos: Vec2::default(),
-    }
-  }
 
-  pub fn apply_input_event(&mut self, event: &str) -> Result<(), JsValue> {
-    Ok(())
-  }
-
-  pub fn setup(&mut self) -> Result<(), JsValue> {
     crate::log("Setting up game state");
     let document = web_sys::window().unwrap().document().to_js_error()?;
     let mut images = HashMap::new();
@@ -174,20 +167,32 @@ impl GameState {
     crate::log("... 1");
 
     let game_map = Rc::new(
-      GameMap::from_resources(&self.resources, "/assets/map1.tmx").expect("Failed to load map"),
+      GameMap::from_resources(&resources, "/assets/map1.tmx").expect("Failed to load map"),
     );
+
+    let collision = Collision::from_game_map(&game_map);
 
     crate::log("... 2");
 
-    self.draw_context = Some(DrawContext {
+    let draw_context = DrawContext {
       canvases: canvases.try_into().unwrap(),
       contexts: contexts.try_into().unwrap(),
       images,
       // FIXME: Don't hard-code this.
       tile_renderer: TileRenderer::new(game_map, Vec2(2048.0, 1536.0)),
-    });
+    };
     crate::log("... 3");
 
+    Ok(Self {
+      resources,
+      draw_context,
+      keys_held: HashSet::new(),
+      camera_pos: Vec2::default(),
+      collision,
+    })
+  }
+
+  pub fn apply_input_event(&mut self, event: &str) -> Result<(), JsValue> {
     Ok(())
   }
 
@@ -197,10 +202,7 @@ impl GameState {
       contexts,
       images,
       tile_renderer,
-    } = match self.draw_context.as_mut() {
-      Some(draw_context) => draw_context,
-      None => return Ok(false),
-    };
+    } = &mut self.draw_context;
     // contexts[BACKGROUND_LAYER].begin_path();
     // contexts[BACKGROUND_LAYER].move_to(10.0, 10.0);
     // contexts[BACKGROUND_LAYER].line_to(100.0 * rand::random::<f64>(), 100.0);
