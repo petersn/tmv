@@ -1,0 +1,14 @@
+{
+  "name": "template",
+  "version": "0.1.0",
+  "scripts": {
+    "build": "npx esbuild src/App.ts --bundle --minify --sourcemap --target=es2020 --format=esm --outfile=public/bundle.js",
+    "dev": "npm run build -- --servedir=public"
+  },
+  "devDependencies": {
+    "esbuild": "^0.17.8"
+  },
+  "dependencies": {
+    "tmv": "file:../tmv/pkg"
+  }
+}

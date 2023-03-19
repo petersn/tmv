@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>tmv</title>
+    <link rel="stylesheet" href="index.css" />
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <div style="position: relative; border: 1px solid black; width: 800px; height: 600px">
+      <canvas
+        id="uiCanvas"
+        width="800px"
+        height="600px"
+        style="position: absolute; top: 0px; left: px; z-index: 3"
+      ></canvas>
+      <canvas
+        id="mainCanvas"
+        width="800px"
+        height="600px"
+        style="position: absolute; top: 0px; left: px; z-index: 3"
+      ></canvas>
+      <canvas
+        id="backgroundCanvas"
+        width="800px"
+        height="600px"
+        style="position: absolute; top: 0px; left: px; z-index: 3"
+      ></canvas>
+      <canvas
+        id="scratchCanvas"
+        width="2048px"
+        height="1536px"
+        style="display: none"
+      ></canvas>
+    </div>
+    <script type="module" src="bundle.js"></script>
+  </body>
+</html>
