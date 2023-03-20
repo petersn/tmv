@@ -35,3 +35,6 @@ features = [
   'Window',
 ]
 
+[profile.dev.package.rapier2d]
+opt-level = 3
+

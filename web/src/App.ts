@@ -19,12 +19,16 @@ function rafLoop(timestamp: number) {
 }
 
 function onKeyDown(e: KeyboardEvent) {
+  if (e.repeat)
+    return;
   if (gameState !== null) {
     gameState.apply_input_event(JSON.stringify({ type: 'KeyDown', key: e.key }));
   }
 }
 
 function onKeyUp(e: KeyboardEvent) {
+  if (e.repeat)
+    return;
   if (gameState !== null) {
     gameState.apply_input_event(JSON.stringify({ type: 'KeyUp', key: e.key }));
   }

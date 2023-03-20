@@ -1,21 +1,23 @@
-use std::{collections::{HashMap, HashSet}, rc::Rc};
+use std::{
+  collections::{HashMap, HashSet},
+  rc::Rc,
+};
 
-use collision::CollisionWorld;
+use collision::{CollisionWorld, PhysicsObjectHandle};
+use game_maps::GameMap;
 use js_sys::Array;
-use math::{Vec2, Rect};
-use physics::Collision;
+use math::{Rect, Vec2};
 use serde::Deserialize;
-use tile_rendering::TileRenderer;
 use strum::IntoEnumIterator;
+use tile_rendering::TileRenderer;
 use wasm_bindgen::prelude::*;
 
-use game_maps::GameMap;
-
 pub mod game_maps;
-pub mod tile_rendering;
 pub mod math;
-pub mod physics;
+pub mod tile_rendering;
+//pub mod physics;
 pub mod collision;
+pub mod camera;
 
 use tile_rendering::TILE_SIZE;
 
@@ -23,8 +25,8 @@ const UI_LAYER: usize = 0;
 const MAIN_LAYER: usize = 1;
 const BACKGROUND_LAYER: usize = 2;
 const SCRATCH_LAYER: usize = 3;
-//const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
-const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
+const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
+//const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
   type Ok;
@@ -128,24 +130,21 @@ struct DrawContext {
 #[derive(Deserialize)]
 #[serde(tag = "type")]
 pub enum InputEvent {
-  KeyDown {
-    key: String,
-  },
-  KeyUp {
-    key: String,
-  },
+  KeyDown { key: String },
+  KeyUp { key: String },
 }
 
 #[wasm_bindgen]
 pub struct GameState {
-  resources:    HashMap<String, Vec<u8>>,
-  draw_context: DrawContext,
-  keys_held:    HashSet<String>,
-  camera_pos:   Vec2,
-  collision:    Collision,
-  coll_world:   CollisionWorld,
-  player_pos:   Vec2,
-  player_vel:   Vec2,
+  resources:      HashMap<String, Vec<u8>>,
+  draw_context:   DrawContext,
+  keys_held:      HashSet<String>,
+  jump_hit:       bool,
+  camera_pos:     Vec2,
+  collision:      CollisionWorld,
+  player_physics: PhysicsObjectHandle,
+  player_vel:     Vec2,
+  grounded_last_frame: bool,
 }
 
 #[wasm_bindgen]
@@ -185,14 +184,18 @@ impl GameState {
     }
     crate::log("... 1");
 
-    let game_map = Rc::new(
-      GameMap::from_resources(&resources, "/assets/map1.tmx").expect("Failed to load map"),
+    let game_map =
+      Rc::new(GameMap::from_resources(&resources, "/assets/map1.tmx").expect("Failed to load map"));
+
+    //let collision = Collision::from_game_map(&game_map);
+    let mut collision = collision::CollisionWorld::new();
+    collision.load_game_map(&game_map);
+    let player_physics = collision.new_cuboid(
+      collision::PhysicsKind::Sensor,
+      collision.spawn_point,
+      PLAYER_SIZE,
+      0.4,
     );
-
-    let collision = Collision::from_game_map(&game_map);
-    let mut physics = collision::CollisionWorld::new();
-    physics.load_game_map(&game_map);
-
 
     crate::log("... 2");
 
@@ -209,11 +212,12 @@ impl GameState {
       resources,
       draw_context,
       keys_held: HashSet::new(),
+      jump_hit: false,
       camera_pos: Vec2::default(),
-      player_pos: Vec2::default(),
-      player_vel: Vec2::default(),
       collision,
-      coll_world: CollisionWorld::new(),
+      player_physics,
+      player_vel: Vec2::default(),
+      grounded_last_frame: false,
     })
   }
 
@@ -221,6 +225,9 @@ impl GameState {
     let event: InputEvent = serde_json::from_str(event).to_js_error()?;
     match event {
       InputEvent::KeyDown { key } => {
+        if key == "ArrowUp" {
+          self.jump_hit = true;
+        }
         self.keys_held.insert(key);
       }
       InputEvent::KeyUp { key } => {
@@ -231,7 +238,7 @@ impl GameState {
   }
 
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
-    self.player_vel.1 += 1.0 * dt;
+    //self.player_vel.1 += 1.0 * dt;
     // let (new_player_pos, collision_happened) = self.collision.try_move_rect(Rect {
     //   pos: self.player_pos,
     //   size: PLAYER_SIZE,
@@ -239,26 +246,81 @@ impl GameState {
     // if collision_happened {
     //   self.player_vel.1 = 0.0;
     // }
-    let (new_pos, has_collision) = self.collision.try_move_rect(
-      Rect {
-        pos: self.player_pos,
-        size: PLAYER_SIZE,
-      },
-      self.player_vel,
-    );
-    self.player_pos = new_pos;
-    if has_collision {
-      self.player_vel.1 = 0.0;
-    }
+    // let (new_pos, has_collision) = self.collision.try_move_rect(
+    //   Rect {
+    //     pos: self.player_pos,
+    //     size: PLAYER_SIZE,
+    //   },
+    //   self.player_vel,
+    // );
+    self.collision.step(dt);
+    // self.player_pos = new_pos;
+    // if has_collision {
+    //   self.player_vel.1 = 0.0;
+    // }
+    // if self.keys_held.contains("ArrowLeft") {
+    //   self.player_vel.0 -= 1.0 * dt;
+    // }
+    // if self.keys_held.contains("ArrowRight") {
+    //   self.player_vel.0 += 1.0 * dt;
+    // }
+    // if self.keys_held.contains("ArrowUp") {
+    //   self.player_vel.1 -= 10.0;
+    // }
+    let horizontal_decay_factor = match self.grounded_last_frame {
+      true => 0.5f32.powf(60.0 * dt),
+      false => 0.5f32.powf(5.0 * dt),
+    };
+    let horizontal_dv = match self.grounded_last_frame {
+      true => 150.0,
+      false => 50.0,
+    };
     if self.keys_held.contains("ArrowLeft") {
-      self.player_vel.0 -= 1.0 * dt;
+      self.player_vel.0 -= horizontal_dv * dt;
+    } else if self.player_vel.0 < 0.0 {
+      self.player_vel.0 *= horizontal_decay_factor;
     }
     if self.keys_held.contains("ArrowRight") {
-      self.player_vel.0 += 1.0 * dt;
+      self.player_vel.0 += horizontal_dv * dt;
+    } else if self.player_vel.0 > 0.0 {
+      self.player_vel.0 *= horizontal_decay_factor;
     }
-    if self.keys_held.contains("ArrowUp") {
-      self.player_vel.1 -= 10.0;
+
+    if self.player_vel.1 < 0.0 && !self.keys_held.contains("ArrowUp") {
+      self.player_vel.1 *= 0.01f32.powf(dt);
     }
+
+    self.player_vel.0 = self.player_vel.0.max(-20.0).min(20.0);
+    self.player_vel.1 = (self.player_vel.1 + 60.0 * dt).min(30.0);
+    let effective_motion = self.collision.move_object_with_character_controller(
+      dt,
+      &self.player_physics,
+      dt * self.player_vel,
+    );
+    // For some reason effective_motion.grounded seems to always be false,
+    // so we instead consider ourselves grounded if we didn't move the full requested amount in y.
+    let grounded = self.player_vel.1 > 0.0 && effective_motion.translation.y < dt * self.player_vel.1 * 0.95;
+    if grounded {
+      self.player_vel.1 = self.player_vel.1.min(0.0);
+    }
+    let blocked_to_left = self.player_vel.0 < 0.0 && effective_motion.translation.x > dt * self.player_vel.0 * 0.95;
+    let blocked_to_right = self.player_vel.0 > 0.0 && effective_motion.translation.x < dt * self.player_vel.0 * 0.95;
+    let blocked_to_top = self.player_vel.1 < 0.0 && effective_motion.translation.y > dt * self.player_vel.1 * 0.95;
+    if blocked_to_left {
+      self.player_vel.0 = self.player_vel.0.max(0.0);
+    }
+    if blocked_to_right {
+      self.player_vel.0 = self.player_vel.0.min(0.0);
+    }
+    if blocked_to_top {
+      self.player_vel.1 = self.player_vel.1.max(0.0);
+    }
+    if self.jump_hit && grounded {
+      let abs_horizontal = self.player_vel.0.abs();
+      self.player_vel.1 = -30.0 - 0.1 * abs_horizontal;
+    }
+    self.jump_hit = false;
+    self.grounded_last_frame = grounded;
     Ok(())
   }
 
@@ -274,10 +336,13 @@ impl GameState {
     // contexts[BACKGROUND_LAYER].line_to(100.0 * rand::random::<f64>(), 100.0);
     // contexts[BACKGROUND_LAYER].stroke();
 
-    crate::log("Drawing frame");
+    let player_pos = self.collision.get_position(&self.player_physics).unwrap_or(Vec2(0.0, 0.0));
 
     // Recenter the gamera.
-    self.camera_pos = Vec2(self.player_pos.0 - 400.0 / TILE_SIZE, self.player_pos.1 - 300.0 / TILE_SIZE);
+    self.camera_pos = Vec2(
+      player_pos.0 - 400.0 / TILE_SIZE,
+      player_pos.1 - 400.0 / TILE_SIZE,
+    );
 
     // Draw the game background.
     let draw_rect = Rect {
@@ -298,8 +363,8 @@ impl GameState {
     // Draw a red rectangle for the player.
     contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("red"));
     contexts[MAIN_LAYER].fill_rect(
-      (TILE_SIZE * self.player_pos.0 - TILE_SIZE * self.camera_pos.0) as f64,
-      (TILE_SIZE * self.player_pos.1 - TILE_SIZE * self.camera_pos.1) as f64,
+      (TILE_SIZE * (player_pos.0 - self.camera_pos.0 - PLAYER_SIZE.0 / 2.0)) as f64,
+      (TILE_SIZE * (player_pos.1 - self.camera_pos.1 - PLAYER_SIZE.1 / 2.0)) as f64,
       (TILE_SIZE * PLAYER_SIZE.0) as f64,
       (TILE_SIZE * PLAYER_SIZE.1) as f64,
     );

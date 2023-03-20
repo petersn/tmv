@@ -3,10 +3,10 @@ use std::rc::Rc;
 
 use wasm_bindgen::prelude::*;
 
-use crate::ImageResource;
 // use crate::game::ImageResource;
 use crate::game_maps::GameMap;
 use crate::math::{Rect, Vec2};
+use crate::ImageResource;
 // use crate::web::IntoJsError;
 
 pub const TILE_SIZE: f32 = 32.0;
@@ -109,10 +109,12 @@ impl TileRenderer {
                     let image_resource = tileset_index_to_imag_resource
                       .get(&tileset_index)
                       .expect("Missing image resource");
-                    scratch_ctx.translate(
-                      (dest_pos.0 + TILE_SIZE / 2.0) as f64,
-                      (dest_pos.1 + TILE_SIZE / 2.0) as f64,
-                    ).unwrap();
+                    scratch_ctx
+                      .translate(
+                        (dest_pos.0 + TILE_SIZE / 2.0) as f64,
+                        (dest_pos.1 + TILE_SIZE / 2.0) as f64,
+                      )
+                      .unwrap();
                     if tile.flip_h {
                       // Mirror around dest_pos.0 + TILE_SIZE / 2
                       scratch_ctx.scale(-1.0, 1.0).unwrap();
@@ -189,21 +191,23 @@ impl TileRenderer {
     //crate::log(&format!("New rect: {:?} -- Request rect: {:?}", self.current_rect, draw_rect));
     assert!(self.current_rect.contains_rect(draw_rect));
     // Draw the scratch canvas to the destination canvas.
-    dest.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-      // &scratch_canvas,
-      // (draw_rect.pos.0 - self.current_rect.pos.0) as f64,
-      // (draw_rect.pos.1 - self.current_rect.pos.1) as f64,
-      // draw_rect.size.0 as f64,
-      // draw_rect.size.1 as f64,
-      &scratch_canvas,
-      (draw_rect.pos.0 - self.current_rect.pos.0) as f64,
-      (draw_rect.pos.1 - self.current_rect.pos.1) as f64,
-      draw_rect.size.0 as f64,
-      draw_rect.size.1 as f64,
-      0.0,
-      0.0,
-      draw_rect.size.0 as f64,
-      draw_rect.size.1 as f64,
-    ).unwrap();
+    dest
+      .draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+        // &scratch_canvas,
+        // (draw_rect.pos.0 - self.current_rect.pos.0) as f64,
+        // (draw_rect.pos.1 - self.current_rect.pos.1) as f64,
+        // draw_rect.size.0 as f64,
+        // draw_rect.size.1 as f64,
+        &scratch_canvas,
+        (draw_rect.pos.0 - self.current_rect.pos.0) as f64,
+        (draw_rect.pos.1 - self.current_rect.pos.1) as f64,
+        draw_rect.size.0 as f64,
+        draw_rect.size.1 as f64,
+        0.0,
+        0.0,
+        draw_rect.size.0 as f64,
+        draw_rect.size.1 as f64,
+      )
+      .unwrap();
   }
 }
