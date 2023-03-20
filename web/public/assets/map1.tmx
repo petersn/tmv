@@ -298,7 +298,7 @@
    <polyline points="0,0 0,672 1056,672"/>
   </object>
  </objectgroup>
- <objectgroup id="2" name="Collision" visible="0">
+ <objectgroup id="2" name="Collision">
   <object id="11" x="-320" y="128" width="64" height="96">
    <properties>
     <property name="type" value="spawn"/>
