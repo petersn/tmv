@@ -17,6 +17,8 @@ pub mod math;
 pub mod physics;
 pub mod collision;
 
+use tile_rendering::TILE_SIZE;
+
 const UI_LAYER: usize = 0;
 const MAIN_LAYER: usize = 1;
 const BACKGROUND_LAYER: usize = 2;
@@ -188,6 +190,9 @@ impl GameState {
     );
 
     let collision = Collision::from_game_map(&game_map);
+    let mut physics = collision::CollisionWorld::new();
+    physics.load_game_map(&game_map);
+
 
     crate::log("... 2");
 
@@ -272,11 +277,11 @@ impl GameState {
     crate::log("Drawing frame");
 
     // Recenter the gamera.
-    self.camera_pos = Vec2(self.player_pos.0 - 400.0 / 25.0, self.player_pos.1 - 300.0 / 25.0);
+    self.camera_pos = Vec2(self.player_pos.0 - 400.0 / TILE_SIZE, self.player_pos.1 - 300.0 / TILE_SIZE);
 
     // Draw the game background.
     let draw_rect = Rect {
-      pos:  25.0 * self.camera_pos,
+      pos:  TILE_SIZE * self.camera_pos,
       size: Vec2(800.0, 600.0),
     };
     tile_renderer.draw(
@@ -293,10 +298,10 @@ impl GameState {
     // Draw a red rectangle for the player.
     contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("red"));
     contexts[MAIN_LAYER].fill_rect(
-      (25.0 * self.player_pos.0 - 25.0 * self.camera_pos.0) as f64,
-      (25.0 * self.player_pos.1 - 25.0 * self.camera_pos.1) as f64,
-      25.0 * PLAYER_SIZE.0 as f64,
-      25.0 * PLAYER_SIZE.1 as f64,
+      (TILE_SIZE * self.player_pos.0 - TILE_SIZE * self.camera_pos.0) as f64,
+      (TILE_SIZE * self.player_pos.1 - TILE_SIZE * self.camera_pos.1) as f64,
+      (TILE_SIZE * PLAYER_SIZE.0) as f64,
+      (TILE_SIZE * PLAYER_SIZE.1) as f64,
     );
 
     // // Draw all of the game objects.
@@ -313,8 +318,8 @@ impl GameState {
     //       draw_info.y as f64,
     //       draw_info.width as f64,
     //       draw_info.height as f64,
-    //       (25.0 * (pos.0 - self.camera_pos.0)) as f64,
-    //       (-25.0 * (pos.1 - self.camera_pos.1)) as f64,
+    //       (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+    //       (-TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
     //       50.0 * game_object.draw_half_dims.0 as f64,
     //       50.0 * game_object.draw_half_dims.1 as f64,
     //     )?;

@@ -9,7 +9,7 @@ use crate::game_maps::GameMap;
 use crate::math::{Rect, Vec2};
 // use crate::web::IntoJsError;
 
-const TILE_SIZE: f32 = 32.0;
+pub const TILE_SIZE: f32 = 32.0;
 const CHUNK_SIZE_IN_PIXELS: f32 = TILE_SIZE * tiled::Chunk::WIDTH as f32;
 
 // Statically assert that tiled::Chunk::WIDTH == tiled::Chunk::HEIGHT.

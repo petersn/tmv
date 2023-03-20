@@ -1,6 +1,6 @@
 use rapier2d::{prelude::*, na::Vector2};
 
-use crate::math::Vec2;
+use crate::{math::Vec2, game_maps::GameMap};
 
 pub enum PhysicsKind {
   Static,
@@ -48,6 +48,26 @@ impl CollisionWorld {
       ccd_solver:             CCDSolver::new(),
       physics_hooks:          (),
       event_handler:          (),
+    }
+  }
+
+  pub fn load_game_map(&mut self, game_map: &GameMap) {
+    let collision_layer = game_map.map.layers().find(|l| l.name == "Collision").unwrap();
+
+    match collision_layer.layer_type() {
+      tiled::LayerType::ObjectLayer(object_layer) => {
+        for object in object_layer.objects() {
+          //println!("Object: {:?}", object);
+          crate::log(&format!("Object: {:?}", object));
+          // let pos = object.properties;
+          // let size = object.size();
+          // let pos = Vec2(pos.x as f32, pos.y as f32);
+          // let size = Vec2(size.width as f32, size.height as f32);
+          // let rect = Rect::new(pos, size);
+          // self.add_rect(rect, PhysicsKind::Static);
+        }
+      }
+      _ => panic!("Unsupported layer type"),
     }
   }
 

@@ -24,7 +24,7 @@ impl Collision {
                   chunk_pos.0 * Chunk::WIDTH as i32 + x,
                   chunk_pos.1 * Chunk::HEIGHT as i32 + y,
                 );
-                crate::log(&format!("At ({}, {}): {:?}", tile_pos.0, tile_pos.1, tile));
+                //crate::log(&format!("At ({}, {}): {:?}", tile_pos.0, tile_pos.1, tile));
                 max_xy.0 = max_xy.0.max(tile_pos.0);
                 max_xy.1 = max_xy.1.max(tile_pos.1);
                 min_xy.0 = min_xy.0.min(tile_pos.0);
