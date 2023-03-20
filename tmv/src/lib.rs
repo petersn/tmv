@@ -1,8 +1,10 @@
 use std::{collections::{HashMap, HashSet}, rc::Rc};
 
+use collision::CollisionWorld;
 use js_sys::Array;
 use math::{Vec2, Rect};
 use physics::Collision;
+use serde::Deserialize;
 use tile_rendering::TileRenderer;
 use strum::IntoEnumIterator;
 use wasm_bindgen::prelude::*;
@@ -13,11 +15,14 @@ pub mod game_maps;
 pub mod tile_rendering;
 pub mod math;
 pub mod physics;
+pub mod collision;
 
 const UI_LAYER: usize = 0;
 const MAIN_LAYER: usize = 1;
 const BACKGROUND_LAYER: usize = 2;
 const SCRATCH_LAYER: usize = 3;
+//const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
+const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
   type Ok;
@@ -118,6 +123,17 @@ struct DrawContext {
   tile_renderer: TileRenderer,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "type")]
+pub enum InputEvent {
+  KeyDown {
+    key: String,
+  },
+  KeyUp {
+    key: String,
+  },
+}
+
 #[wasm_bindgen]
 pub struct GameState {
   resources:    HashMap<String, Vec<u8>>,
@@ -125,6 +141,7 @@ pub struct GameState {
   keys_held:    HashSet<String>,
   camera_pos:   Vec2,
   collision:    Collision,
+  coll_world:   CollisionWorld,
   player_pos:   Vec2,
   player_vel:   Vec2,
 }
@@ -188,11 +205,55 @@ impl GameState {
       draw_context,
       keys_held: HashSet::new(),
       camera_pos: Vec2::default(),
+      player_pos: Vec2::default(),
+      player_vel: Vec2::default(),
       collision,
+      coll_world: CollisionWorld::new(),
     })
   }
 
   pub fn apply_input_event(&mut self, event: &str) -> Result<(), JsValue> {
+    let event: InputEvent = serde_json::from_str(event).to_js_error()?;
+    match event {
+      InputEvent::KeyDown { key } => {
+        self.keys_held.insert(key);
+      }
+      InputEvent::KeyUp { key } => {
+        self.keys_held.remove(&key);
+      }
+    }
+    Ok(())
+  }
+
+  pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
+    self.player_vel.1 += 1.0 * dt;
+    // let (new_player_pos, collision_happened) = self.collision.try_move_rect(Rect {
+    //   pos: self.player_pos,
+    //   size: PLAYER_SIZE,
+    // }, self.player_vel);
+    // if collision_happened {
+    //   self.player_vel.1 = 0.0;
+    // }
+    let (new_pos, has_collision) = self.collision.try_move_rect(
+      Rect {
+        pos: self.player_pos,
+        size: PLAYER_SIZE,
+      },
+      self.player_vel,
+    );
+    self.player_pos = new_pos;
+    if has_collision {
+      self.player_vel.1 = 0.0;
+    }
+    if self.keys_held.contains("ArrowLeft") {
+      self.player_vel.0 -= 1.0 * dt;
+    }
+    if self.keys_held.contains("ArrowRight") {
+      self.player_vel.0 += 1.0 * dt;
+    }
+    if self.keys_held.contains("ArrowUp") {
+      self.player_vel.1 -= 10.0;
+    }
     Ok(())
   }
 
@@ -211,8 +272,7 @@ impl GameState {
     crate::log("Drawing frame");
 
     // Recenter the gamera.
-    let our_player_pos = (0.0, 0.0);
-    self.camera_pos = Vec2(our_player_pos.0 - 400.0 / 25.0, our_player_pos.1 - 300.0 / 25.0);
+    self.camera_pos = Vec2(self.player_pos.0 - 400.0 / 25.0, self.player_pos.1 - 300.0 / 25.0);
 
     // Draw the game background.
     let draw_rect = Rect {
@@ -229,6 +289,15 @@ impl GameState {
 
     // Clear the main layer.
     contexts[MAIN_LAYER].clear_rect(0.0, 0.0, 800.0, 600.0);
+
+    // Draw a red rectangle for the player.
+    contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("red"));
+    contexts[MAIN_LAYER].fill_rect(
+      (25.0 * self.player_pos.0 - 25.0 * self.camera_pos.0) as f64,
+      (25.0 * self.player_pos.1 - 25.0 * self.camera_pos.1) as f64,
+      25.0 * PLAYER_SIZE.0 as f64,
+      25.0 * PLAYER_SIZE.1 as f64,
+    );
 
     // // Draw all of the game objects.
     // for game_object in self.game_world.game_objects.values() {

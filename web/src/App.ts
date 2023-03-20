@@ -11,10 +11,23 @@ function rafLoop(timestamp: number) {
     // this.conn.syncedGameWorld!.step(1e-3 * frameTime);
     // this.conn.syncedGameWorld!.draw_frame();
   //} finally {
+  gameState!.step(1 / 60);
   gameState!.draw_frame();
   window.requestAnimationFrame(rafLoop);
     // this.lastFrameTimestamp = timestamp;
   //}
+}
+
+function onKeyDown(e: KeyboardEvent) {
+  if (gameState !== null) {
+    gameState.apply_input_event(JSON.stringify({ type: 'KeyDown', key: e.key }));
+  }
+}
+
+function onKeyUp(e: KeyboardEvent) {
+  if (gameState !== null) {
+    gameState.apply_input_event(JSON.stringify({ type: 'KeyUp', key: e.key }));
+  }
 }
 
 async function main() {
@@ -50,6 +63,8 @@ async function main() {
     console.log('All resources loaded');
     gameState = new GameState(resources);
     window.requestAnimationFrame(rafLoop);
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
   });
 }
 

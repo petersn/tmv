@@ -1,10 +1,5 @@
 use tiled::Chunk;
-use crate::{game_maps::GameMap, math::Vec2};
-
-pub struct Rect {
-  pub xy: Vec2,
-  pub wh: Vec2,
-}
+use crate::{game_maps::GameMap, math::{Vec2, Rect}};
 
 pub struct Collision {
   pub size: (i32, i32),
@@ -90,10 +85,10 @@ impl Collision {
 
   /// Checks if the rect overlaps any of the collision tiles.
   pub fn check_rect_collision(&self, r: Rect) -> bool {
-    let lowest_x = r.xy.0.floor() as i32;
-    let lowest_y = r.xy.1.floor() as i32;
-    let highest_x = (r.xy.0 + r.wh.0).ceil() as i32;
-    let highest_y = (r.xy.1 + r.wh.1).ceil() as i32;
+    let lowest_x = r.pos.0.floor() as i32;
+    let lowest_y = r.pos.1.floor() as i32;
+    let highest_x = (r.pos.0 + r.size.0).ceil() as i32;
+    let highest_y = (r.pos.1 + r.size.1).ceil() as i32;
     for x in lowest_x..highest_x {
       for y in lowest_y..highest_y {
         if self.check_collision(x, y) {
@@ -102,5 +97,22 @@ impl Collision {
       }
     }
     false
+  }
+
+  pub fn try_move_rect(&self, r: Rect, delta: Vec2) -> (Vec2, bool) {
+    let mut new_pos = r.pos;
+    let mut has_collision = false;
+    for i in 0..41 {
+      let test_pos = r.pos + delta * (i as f32 / 40.0);
+      if self.check_rect_collision(Rect {
+        pos: test_pos,
+        size: r.size,
+      }) {
+        has_collision = true;
+        break;
+      }
+      new_pos = test_pos;
+    }
+    (new_pos, has_collision)
   }
 }

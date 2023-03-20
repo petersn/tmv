@@ -112,19 +112,19 @@ impl TileRenderer {
                     scratch_ctx.translate(
                       (dest_pos.0 + TILE_SIZE / 2.0) as f64,
                       (dest_pos.1 + TILE_SIZE / 2.0) as f64,
-                    );
+                    ).unwrap();
                     if tile.flip_h {
                       // Mirror around dest_pos.0 + TILE_SIZE / 2
-                      scratch_ctx.scale(-1.0, 1.0);
+                      scratch_ctx.scale(-1.0, 1.0).unwrap();
                     }
                     if tile.flip_v {
-                      scratch_ctx.scale(1.0, -1.0);
-                      //scratch_ctx.translate(0.0, TILE_SIZE as f64);
+                      scratch_ctx.scale(1.0, -1.0).unwrap();
+                      //scratch_ctx.translate(0.0, TILE_SIZE as f64).unwrap();
                     }
                     // Flip diagonally
                     if tile.flip_d {
-                      scratch_ctx.rotate(std::f64::consts::FRAC_PI_2);
-                      scratch_ctx.scale(1.0, -1.0);
+                      scratch_ctx.rotate(std::f64::consts::FRAC_PI_2).unwrap();
+                      scratch_ctx.scale(1.0, -1.0).unwrap();
                       // scratch_ctx.rotate(std::f64::consts::FRAC_PI_2);
                       // scratch_ctx.translate(0.0, -TILE_SIZE as f64);
                     }
@@ -139,9 +139,10 @@ impl TileRenderer {
                         -TILE_SIZE as f64 / 2.0, //dest_pos.1 as f64,
                         TILE_SIZE as f64,
                         TILE_SIZE as f64,
-                      );
+                      )
+                      .unwrap();
                     // Reset the transform.
-                    scratch_ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
+                    scratch_ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
                   }
                 }
               }
@@ -203,6 +204,6 @@ impl TileRenderer {
       0.0,
       draw_rect.size.0 as f64,
       draw_rect.size.1 as f64,
-    );
+    ).unwrap();
   }
 }
