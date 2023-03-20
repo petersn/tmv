@@ -7,17 +7,19 @@ use collision::{CollisionWorld, PhysicsObjectHandle};
 use game_maps::GameMap;
 use js_sys::Array;
 use math::{Rect, Vec2};
-use serde::Deserialize;
+use rapier2d::prelude::{QueryFilter, Shape, ColliderHandle};
+use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tile_rendering::TileRenderer;
+use tiled::ObjectLayerData;
 use wasm_bindgen::prelude::*;
 
 pub mod game_maps;
 pub mod math;
 pub mod tile_rendering;
 //pub mod physics;
-pub mod collision;
 pub mod camera;
+pub mod collision;
 
 use tile_rendering::TILE_SIZE;
 
@@ -134,17 +136,47 @@ pub enum InputEvent {
   KeyUp { key: String },
 }
 
+#[derive(Serialize)]
+struct PowerUpState {
+  pub double_jump: bool,
+  pub coins:       u32,
+  pub rare_coins:  u32,
+}
+
+impl Default for PowerUpState {
+  fn default() -> Self {
+    Self {
+      double_jump: false,
+      coins:       0,
+      rare_coins:  0,
+    }
+  }
+}
+
+pub enum GameObjectData {
+  Coin,
+  RareCoin,
+  DeleteMe,
+}
+
+pub struct GameObject {
+  pub physics_handle: PhysicsObjectHandle,
+  pub data: GameObjectData,
+}
+
 #[wasm_bindgen]
 pub struct GameState {
-  resources:      HashMap<String, Vec<u8>>,
-  draw_context:   DrawContext,
-  keys_held:      HashSet<String>,
-  jump_hit:       bool,
-  camera_pos:     Vec2,
-  collision:      CollisionWorld,
-  player_physics: PhysicsObjectHandle,
-  player_vel:     Vec2,
+  resources:           HashMap<String, Vec<u8>>,
+  draw_context:        DrawContext,
+  keys_held:           HashSet<String>,
+  jump_hit:            bool,
+  camera_pos:          Vec2,
+  collision:           CollisionWorld,
+  player_physics:      PhysicsObjectHandle,
+  player_vel:          Vec2,
   grounded_last_frame: bool,
+  powerup_state:       PowerUpState,
+  objects:             HashMap<ColliderHandle, GameObject>,
 }
 
 #[wasm_bindgen]
@@ -187,9 +219,11 @@ impl GameState {
     let game_map =
       Rc::new(GameMap::from_resources(&resources, "/assets/map1.tmx").expect("Failed to load map"));
 
+    let mut objects = HashMap::new();
+
     //let collision = Collision::from_game_map(&game_map);
     let mut collision = collision::CollisionWorld::new();
-    collision.load_game_map(&game_map);
+    collision.load_game_map(&game_map, &mut objects);
     let player_physics = collision.new_cuboid(
       collision::PhysicsKind::Sensor,
       collision.spawn_point,
@@ -218,7 +252,13 @@ impl GameState {
       player_physics,
       player_vel: Vec2::default(),
       grounded_last_frame: false,
+      powerup_state: PowerUpState::default(),
+      objects,
     })
+  }
+
+  pub fn get_powerup_state(&self) -> JsValue {
+    serde_wasm_bindgen::to_value(&self.powerup_state).unwrap()
   }
 
   pub fn apply_input_event(&mut self, event: &str) -> Result<(), JsValue> {
@@ -254,6 +294,44 @@ impl GameState {
     //   self.player_vel,
     // );
     self.collision.step(dt);
+    // while let Ok(collision_event) = self.collision.collision_recv.try_recv() {
+    //   // Handle the collision event.
+    //   crate::log(&format!("Received collision event: {:?}", collision_event));
+    // }
+    // while let Ok(contact_force_event) = self.collision.contact_force_recv.try_recv() {
+    //   // Handle the trigger event.
+    //   crate::log(&format!("Received trigger event: {:?}", contact_force_event));
+    // }
+
+    let filter = QueryFilter::default();
+
+    // Get the shape and pos of the player collider.
+    if let Some((shape, pos)) = self.collision.get_shape_and_position(&self.player_physics) {
+      self.collision.query_pipeline.intersections_with_shape(
+        &self.collision.rigid_body_set, &self.collision.collider_set, pos, shape, filter, |handle| {
+          if let Some(object) = self.objects.get_mut(&handle) {
+            match object.data {
+              GameObjectData::Coin => {
+                object.data = GameObjectData::DeleteMe;
+                self.powerup_state.coins += 1;
+              }
+              GameObjectData::RareCoin => {
+                object.data = GameObjectData::DeleteMe;
+                self.powerup_state.rare_coins += 1;
+              }
+              GameObjectData::DeleteMe => {}
+            }
+          }
+          true // Return `false` instead if we want to stop searching for other colliders that contain this point.
+        }
+      );
+    }
+    // Remove deleted objects.
+    self.objects.retain(|_, v| match v.data {
+      GameObjectData::DeleteMe => false,
+      _ => true,
+    });
+
     // self.player_pos = new_pos;
     // if has_collision {
     //   self.player_vel.1 = 0.0;
@@ -299,13 +377,17 @@ impl GameState {
     );
     // For some reason effective_motion.grounded seems to always be false,
     // so we instead consider ourselves grounded if we didn't move the full requested amount in y.
-    let grounded = self.player_vel.1 > 0.0 && effective_motion.translation.y < dt * self.player_vel.1 * 0.95;
+    let grounded =
+      self.player_vel.1 > 0.0 && effective_motion.translation.y < dt * self.player_vel.1 * 0.95;
     if grounded {
       self.player_vel.1 = self.player_vel.1.min(0.0);
     }
-    let blocked_to_left = self.player_vel.0 < 0.0 && effective_motion.translation.x > dt * self.player_vel.0 * 0.95;
-    let blocked_to_right = self.player_vel.0 > 0.0 && effective_motion.translation.x < dt * self.player_vel.0 * 0.95;
-    let blocked_to_top = self.player_vel.1 < 0.0 && effective_motion.translation.y > dt * self.player_vel.1 * 0.95;
+    let blocked_to_left =
+      self.player_vel.0 < 0.0 && effective_motion.translation.x > dt * self.player_vel.0 * 0.95;
+    let blocked_to_right =
+      self.player_vel.0 > 0.0 && effective_motion.translation.x < dt * self.player_vel.0 * 0.95;
+    let blocked_to_top =
+      self.player_vel.1 < 0.0 && effective_motion.translation.y > dt * self.player_vel.1 * 0.95;
     if blocked_to_left {
       self.player_vel.0 = self.player_vel.0.max(0.0);
     }
@@ -368,6 +450,39 @@ impl GameState {
       (TILE_SIZE * PLAYER_SIZE.0) as f64,
       (TILE_SIZE * PLAYER_SIZE.1) as f64,
     );
+
+    // Draw all of the objects.
+    for (handle, object) in &self.objects {
+      match object.data {
+        GameObjectData::Coin | GameObjectData::RareCoin => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          // Draw a circle, with a different color outside.
+          match object.data {
+            GameObjectData::Coin => {
+              contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
+              contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#aa0"));
+            }
+            GameObjectData::RareCoin => {
+              contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#0ff"));
+              contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#0aa"));
+            }
+            _ => unreachable!(),
+          }
+          contexts[MAIN_LAYER].set_line_width(5.0);
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].arc(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+            (TILE_SIZE / 2.0) as f64,
+            0.0,
+            2.0 * std::f64::consts::PI,
+          );
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].stroke();
+        }
+        GameObjectData::DeleteMe => {}
+      }
+    }
 
     // // Draw all of the game objects.
     // for game_object in self.game_world.game_objects.values() {

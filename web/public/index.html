@@ -5,10 +5,23 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>tmv</title>
     <link rel="stylesheet" href="index.css" />
+    <!-- Create a style -->
+    <style>
+      .powerup {
+        width: 90px;
+        height: 90px;
+        border: 1px solid black;
+        margin: 4px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        user-select: none;
+      }
+    </style>
   </head>
 
   <body>
-    <div id="root"></div>
+    <div id="fpsCounter" style="position: absolute; left: 0; top: 0; z-index: 5; color: white; font-family: monospace;"></div>
     <div style="position: relative; border: 1px solid black; width: 800px; height: 600px">
       <canvas
         id="uiCanvas"
@@ -34,6 +47,21 @@
         height="1536px"
         style="display: none"
       ></canvas>
+    </div>
+    <div style="width: 790px; height: 116px; border-bottom: 1px solid black; border-left: 1px solid black; border-right: 1px solid black; padding: 5px; background-color: #444; color: white;">
+      <div style="font-family: monospace; margin-left: 10px;">
+        Coins: <span id="coins">0</span>
+      </div>
+      <div style="display: flex">
+        <div class="powerup" id="powerup1"></div>
+        <div class="powerup" id="powerup2"></div>
+        <div class="powerup" id="powerup3"></div>
+        <div class="powerup" id="powerup4"></div>
+        <div class="powerup" id="powerup5"></div>
+        <div class="powerup" id="powerup6"></div>
+        <div class="powerup" id="powerup7"></div>
+        <div class="powerup" id="powerup8"></div>
+      </div>
     </div>
     <script type="module" src="bundle.js"></script>
   </body>

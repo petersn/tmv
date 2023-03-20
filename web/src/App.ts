@@ -2,7 +2,13 @@ import init, { get_wasm_version, get_all_image_paths, get_all_resource_names, Ga
 
 var gameState: GameState | null = null;
 
+let frameTimes: number[] = [];
+let lastTimestamp: number | null = null;
+
 function rafLoop(timestamp: number) {
+  const powerupState = gameState!.get_powerup_state();
+  document.getElementById('coins')!.innerText = powerupState.coins.toString();
+
   // const frameTime = timestamp - this.lastFrameTimestamp;
   // this.fps = 1000 / frameTime;
   // if (this.fpsCounterRef.current !== null) {
@@ -11,11 +17,19 @@ function rafLoop(timestamp: number) {
     // this.conn.syncedGameWorld!.step(1e-3 * frameTime);
     // this.conn.syncedGameWorld!.draw_frame();
   //} finally {
-  gameState!.step(1 / 60);
+  if (lastTimestamp !== null) {
+    const dt = timestamp - lastTimestamp;
+    gameState!.step(1e-3 * dt);
+    frameTimes.push(dt);
+    if (frameTimes.length > 10) {
+      frameTimes.shift();
+    }
+    const fps = 1000 / frameTimes.reduce((a, b) => a + b, 0) * frameTimes.length;
+    document.getElementById('fpsCounter')!.innerText = `FPS: ${fps.toFixed(2)}`;
+  }
   gameState!.draw_frame();
   window.requestAnimationFrame(rafLoop);
-    // this.lastFrameTimestamp = timestamp;
-  //}
+  lastTimestamp = timestamp;
 }
 
 function onKeyDown(e: KeyboardEvent) {

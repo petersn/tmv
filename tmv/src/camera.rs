@@ -1,5 +1,4 @@
-use crate::{math::Vec2, game_maps::GameMap, tile_rendering::TILE_SIZE};
-
+use crate::{game_maps::GameMap, math::Vec2, tile_rendering::TILE_SIZE};
 
 pub struct Boundary {
   pub a: Vec2,

@@ -1,8 +1,13 @@
-use std::rc::Rc;
+use tiled::Chunk;
+use std::{rc::Rc, collections::HashMap};
 
-use rapier2d::{control::{KinematicCharacterController, EffectiveCharacterMovement}, na::Vector2, prelude::*};
+use rapier2d::{
+  control::{EffectiveCharacterMovement, KinematicCharacterController},
+  na::Vector2,
+  prelude::*,
+};
 
-use crate::{game_maps::GameMap, math::Vec2, tile_rendering::TILE_SIZE};
+use crate::{game_maps::GameMap, math::Vec2, tile_rendering::TILE_SIZE, GameObject, GameObjectData};
 
 pub enum PhysicsKind {
   Static,
@@ -11,7 +16,7 @@ pub enum PhysicsKind {
   Sensor,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PhysicsObjectHandle {
   pub rigid_body: Option<RigidBodyHandle>,
   pub collider:   ColliderHandle,
@@ -32,13 +37,17 @@ pub struct CollisionWorld {
   pub multibody_joint_set:    MultibodyJointSet,
   pub ccd_solver:             CCDSolver,
   pub physics_hooks:          (),
-  pub event_handler:          (),
+  pub event_handler:          (), //ChannelEventCollector,
   pub char_controller:        KinematicCharacterController,
   pub spawn_point:            Vec2,
+  //pub collision_recv:         crossbeam::channel::Receiver<CollisionEvent>,
+  //pub contact_force_recv:     crossbeam::channel::Receiver<ContactForceEvent>,
 }
 
 impl CollisionWorld {
   pub fn new() -> Self {
+    //let (collision_send, collision_recv) = crossbeam::channel::unbounded();
+    //let (contact_force_send, contact_force_recv) = crossbeam::channel::unbounded();
     Self {
       rigid_body_set:         RigidBodySet::new(),
       collider_set:           ColliderSet::new(),
@@ -53,15 +62,63 @@ impl CollisionWorld {
       multibody_joint_set:    MultibodyJointSet::new(),
       ccd_solver:             CCDSolver::new(),
       physics_hooks:          (),
-      event_handler:          (),
+      event_handler:          (), //ChannelEventCollector::new(collision_send, contact_force_send),
       char_controller:        KinematicCharacterController::default(),
       spawn_point:            Vec2::default(),
+      //collision_recv,
+      //contact_force_recv,
     }
   }
 
-  pub fn load_game_map(&mut self, game_map: &GameMap) {
-    let collision_layer = game_map.map.layers().find(|l| l.name == "Collision").unwrap();
+  pub fn load_game_map(&mut self, game_map: &GameMap, objects: &mut HashMap<ColliderHandle, GameObject>) {
+    let things_layer = game_map.map.layers().find(|l| l.name == "Things").unwrap();
+    match things_layer.layer_type() {
+      tiled::LayerType::TileLayer(tiled::TileLayer::Infinite(data)) => {
+        for (chunk_pos, chunk) in data.chunks() {
+          for x in 0..Chunk::WIDTH as i32 {
+            for y in 0..Chunk::HEIGHT as i32 {
+              if let Some(tile) = chunk.get_tile(x, y) {
+                let tile_pos = (
+                  chunk_pos.0 * Chunk::WIDTH as i32 + x,
+                  chunk_pos.1 * Chunk::HEIGHT as i32 + y,
+                );
+                crate::log(&format!("Tile: {:?} @ {:?}", tile.id(), tile_pos));
+                match tile.id() {
+                  // Coin
+                  4 => {
+                    let handle = self.new_sensor_circle(
+                      PhysicsKind::Sensor,
+                      Vec2(tile_pos.0 as f32, tile_pos.1 as f32),
+                      0.5,
+                    );
+                    objects.insert(handle.collider, GameObject {
+                      physics_handle: handle,
+                      data:           GameObjectData::Coin,
+                    });
+                  }
+                  // Rare coin
+                  9 => {
+                    let handle = self.new_sensor_circle(
+                      PhysicsKind::Sensor,
+                      Vec2(tile_pos.0 as f32, tile_pos.1 as f32),
+                      0.5,
+                    );
+                    objects.insert(handle.collider, GameObject {
+                      physics_handle: handle,
+                      data:           GameObjectData::RareCoin,
+                    });
+                  }
+                  _ => panic!("Unsupported tile: {:?}", tile.id()),
+                }
+              }
+            }
+          }
+        }
+      }
+      _ => panic!("Unsupported layer type: {:?}", things_layer.layer_type()),
+    }
 
+    let collision_layer = game_map.map.layers().find(|l| l.name == "Collision").unwrap();
     match collision_layer.layer_type() {
       tiled::LayerType::ObjectLayer(object_layer) => {
         for object in object_layer.objects() {
@@ -72,7 +129,8 @@ impl CollisionWorld {
                 if prop_name == "type" {
                   match prop_value {
                     tiled::PropertyValue::StringValue(s) if s == "spawn" => {
-                      self.spawn_point = Vec2(object.x + width / 2.0, object.y + height / 2.0) / TILE_SIZE;
+                      self.spawn_point =
+                        Vec2(object.x + width / 2.0, object.y + height / 2.0) / TILE_SIZE;
                     }
                     _ => panic!("Unsupported property value: {:?}", prop_value),
                   }
@@ -134,6 +192,33 @@ impl CollisionWorld {
     }
   }
 
+  pub fn new_sensor_circle(
+    &mut self,
+    kind: PhysicsKind,
+    position: Vec2,
+    radius: f32,
+  ) -> PhysicsObjectHandle {
+    let rigid_body = match kind {
+      PhysicsKind::Static => RigidBodyBuilder::fixed(),
+      PhysicsKind::Dynamic => RigidBodyBuilder::dynamic(),
+      PhysicsKind::Kinematic => RigidBodyBuilder::kinematic_velocity_based(),
+      PhysicsKind::Sensor => RigidBodyBuilder::kinematic_position_based(),
+    }
+    .translation(vector![position.0, position.1])
+    .build();
+    let rigid_body = self.rigid_body_set.insert(rigid_body);
+    let collider = self.collider_set.insert_with_parent(
+      ColliderBuilder::ball(radius).sensor(true),
+      rigid_body,
+      &mut self.rigid_body_set,
+    );
+    PhysicsObjectHandle {
+      rigid_body: Some(rigid_body),
+      collider,
+    }
+  }
+
+  // FIXME: Deduplicate with the above.
   pub fn new_cuboid(
     &mut self,
     kind: PhysicsKind,
@@ -186,6 +271,12 @@ impl CollisionWorld {
     Some(Vec2(position.x, position.y))
   }
 
+  pub fn get_shape_and_position(&self, handle: &PhysicsObjectHandle) -> Option<(&dyn Shape, &Isometry<Real>)> {
+    let rigid_body = self.rigid_body_set.get(handle.rigid_body?)?;
+    let collider = self.collider_set.get(handle.collider)?;
+    Some((collider.shape(), rigid_body.position()))
+  }
+
   pub fn move_object_with_character_controller(
     &mut self,
     dt: f32,
@@ -208,6 +299,7 @@ impl CollisionWorld {
       Vector2::new(shift.0, shift.1),
       QueryFilter::default()
         // Make sure the the character we are trying to move isn’t considered an obstacle.
+        .exclude_sensors()
         .exclude_rigid_body(handle.rigid_body.unwrap()),
       |_| {}, // We don’t care about events in this example.
     );
@@ -248,5 +340,6 @@ impl CollisionWorld {
       &self.physics_hooks,
       &self.event_handler,
     );
+    self.query_pipeline.update(&self.rigid_body_set, &self.collider_set);
   }
 }
