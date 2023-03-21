@@ -84,6 +84,11 @@
  </tile>
  <tile id="19" class="nonsolid"/>
  <tile id="20" class="nonsolid"/>
+ <tile id="21" class="marker">
+  <properties>
+   <property name="name" value="platform_lr"/>
+  </properties>
+ </tile>
  <tile id="22" class="nonsolid">
   <properties>
    <property name="count" type="int" value="5"/>
@@ -108,6 +113,11 @@
  </tile>
  <tile id="27" class="nonsolid"/>
  <tile id="28" class="nonsolid"/>
+ <tile id="29" class="marker">
+  <properties>
+   <property name="name" value="platform_ud"/>
+  </properties>
+ </tile>
  <tile id="30" class="nonsolid">
   <properties>
    <property name="count" type="int" value="10"/>
@@ -124,6 +134,16 @@
   <properties>
    <property name="name" value="powerup"/>
    <property name="powerup" value="wall_jump"/>
+  </properties>
+ </tile>
+ <tile id="34" class="marker">
+  <properties>
+   <property name="name" value="thwump"/>
+  </properties>
+ </tile>
+ <tile id="35" class="marker">
+  <properties>
+   <property name="name" value="turn_laser"/>
   </properties>
  </tile>
  <tile id="38" class="nonsolid">

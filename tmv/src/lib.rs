@@ -182,6 +182,12 @@ impl Default for CharState {
   }
 }
 
+pub enum ThwumpState {
+  Idle,
+  Falling,
+  Rising,
+}
+
 pub enum GameObjectData {
   Coin {
     entity_id: EntityId,
@@ -214,6 +220,16 @@ pub enum GameObjectData {
   Platform {
     currently_solid: bool,
     y:               f32,
+  },
+  MovingPlatform {
+    velocity: Vec2,
+  },
+  Thwump {
+    orientation: Vec2,
+    state:       ThwumpState,
+  },
+  TurnLaser {
+    orientation: Vec2,
   },
   Stone,
   DestroyedDoor,
