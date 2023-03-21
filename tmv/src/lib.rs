@@ -32,6 +32,7 @@ const BACKGROUND_LAYER: usize = 2;
 const SCRATCH_LAYER: usize = 3;
 const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
 const JUMP_GRACE_PERIOD: f32 = 0.1;
+const UNDERWATER_TIME: f32 = 8.0;
 //const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
@@ -215,6 +216,8 @@ pub struct GameState {
   grounded_recently:   f32,
   touching_water:      bool,
   submerged_in_water:  bool,
+  air_remaining:       f32,
+  suppress_air_meter:  bool,
   char_state:          CharState,
   saved_char_state:    CharState,
   objects:             HashMap<ColliderHandle, GameObject>,
@@ -295,6 +298,8 @@ impl GameState {
       player_vel: Vec2::default(),
       touching_water: false,
       submerged_in_water: false,
+      air_remaining: 0.0,
+      suppress_air_meter: false,
       grounded_last_frame: false,
       grounded_recently: 0.0,
       char_state: char_state.clone(),
@@ -477,6 +482,19 @@ impl GameState {
       );
     }
 
+    // Process water submergence.
+    if self.submerged_in_water {
+      self.air_remaining -= dt;
+      if self.air_remaining <= 0.0 {
+        self.char_state.hp -= 1;
+        self.air_remaining += 2.0;
+        self.suppress_air_meter = true;
+      }
+    } else {
+      self.air_remaining = UNDERWATER_TIME;
+      self.suppress_air_meter = false;
+    }
+
     // Remove deleted objects.
     self.objects.retain(|_, v| match v.data {
       GameObjectData::DeleteMe => {
@@ -551,6 +569,9 @@ impl GameState {
     let horizontal_dv = match self.grounded_last_frame {
       true => 150.0,
       false => 50.0,
+    } * match self.touching_water {
+      true => 0.2,
+      false => 1.0,
     };
     if self.keys_held.contains("ArrowLeft") {
       self.player_vel.0 -= horizontal_dv * dt;
@@ -567,8 +588,13 @@ impl GameState {
       self.player_vel.1 *= 0.01f32.powf(dt);
     }
 
-    self.player_vel.0 = self.player_vel.0.max(-15.0).min(15.0);
-    self.player_vel.1 = (self.player_vel.1 + 60.0 * dt).min(30.0);
+    let (max_horiz_speed, gravity_accel, terminal_velocity) = match self.touching_water {
+      true => (10.0, 20.0, 15.0),
+      false => (15.0, 60.0, 30.0),
+    };
+
+    self.player_vel.0 = self.player_vel.0.max(-max_horiz_speed).min(max_horiz_speed);
+    self.player_vel.1 = (self.player_vel.1 + gravity_accel * dt).min(terminal_velocity);
     let effective_motion = self.collision.move_object_with_character_controller(
       dt,
       &self.player_physics,
@@ -601,7 +627,11 @@ impl GameState {
     }
     if self.jump_hit && self.grounded_recently > 0.0 {
       let abs_horizontal = self.player_vel.0.abs();
-      self.player_vel.1 = -22.0 - 0.1 * abs_horizontal;
+      let jump_multiplier = match self.touching_water {
+        true => 0.75,
+        false => 1.0,
+      };
+      self.player_vel.1 = (-22.0 - 0.1 * abs_horizontal) * jump_multiplier;
       self.grounded_recently = 0.0;
     }
     self.jump_hit = false;
@@ -705,6 +735,28 @@ impl GameState {
     if self.submerged_in_water {
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.5)"));
       contexts[MAIN_LAYER].fill_rect(0.0, 0.0, 800.0, 600.0);
+      // Draw our air meter.
+      let air_bubbles = if self.suppress_air_meter { 0 } else { self.air_remaining.round() as i32 };
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.75)"));
+      contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("rgba(128, 128, 255, 0.75)"));
+      contexts[MAIN_LAYER].set_line_width(2.0);
+      let player_center = (
+        (TILE_SIZE * (player_pos.0 - self.camera_pos.0)) as f64,
+        (TILE_SIZE * (player_pos.1 - self.camera_pos.1)) as f64,
+      );
+      for i in 0..air_bubbles {
+        // Draw circles.
+        contexts[MAIN_LAYER].begin_path();
+        contexts[MAIN_LAYER].arc(
+          player_center.0 - 87.5 + 25.0 * i as f64,
+          player_center.1 - 80.0,
+          10.0,
+          0.0,
+          2.0 * std::f64::consts::PI,
+        ).unwrap();
+        contexts[MAIN_LAYER].fill();
+        contexts[MAIN_LAYER].stroke();
+      }
     }
 
     // // Draw all of the game objects.

@@ -4,6 +4,7 @@ var gameState: GameState | null = null;
 
 let frameTimes: number[] = [];
 let lastTimestamp: number | null = null;
+let debugOpen = false;
 
 function rafLoop(timestamp: number) {
   const powerupState = gameState!.get_char_state();
@@ -38,6 +39,10 @@ function rafLoop(timestamp: number) {
 function onKeyDown(e: KeyboardEvent) {
   if (e.repeat)
     return;
+  if (e.key === 'f') {
+    debugOpen = !debugOpen;
+    document.getElementById('fpsCounter')!.style.display = debugOpen ? 'block' : 'none';
+  }
   if (gameState !== null) {
     gameState.apply_input_event(JSON.stringify({ type: 'KeyDown', key: e.key }));
   }
