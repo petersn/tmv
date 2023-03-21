@@ -228,7 +228,9 @@ impl CollisionWorld {
                       handle.collider,
                       GameObject {
                         physics_handle: handle,
-                        data:           GameObjectData::PowerUp { power_up: power_up.to_string() },
+                        data:           GameObjectData::PowerUp {
+                          power_up: power_up.to_string(),
+                        },
                       },
                     );
                   }

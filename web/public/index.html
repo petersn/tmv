@@ -10,12 +10,25 @@
       .powerup {
         width: 90px;
         height: 90px;
+        background-color: #333;
         border: 1px solid black;
         margin: 4px;
         display: flex;
         justify-content: center;
         align-items: center;
         user-select: none;
+      }
+      .t {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: center;
+        font-size: 24px;
+        font-family: monospace;
+        user-select: none;
+        background-color: #666;
+        width: 90px;
+        height: 90px;
       }
     </style>
   </head>
@@ -54,14 +67,53 @@
         <span id="hpIndicator" style="margin-right: 10px;">HP</span>
       </div>
       <div style="display: flex">
-        <div class="powerup" id="powerup1"></div>
-        <div class="powerup" id="powerup2"></div>
-        <div class="powerup" id="powerup3"></div>
-        <div class="powerup" id="powerup4"></div>
-        <div class="powerup" id="powerup5"></div>
-        <div class="powerup" id="powerup6"></div>
-        <div class="powerup" id="powerup7"></div>
-        <div class="powerup" id="powerup8"></div>
+        <div class="powerup">
+          <div class="t" id="powerup1" style="display: none;">
+            <div>Wall</div><div>Jump</div>
+          </div>
+        </div>
+
+        <div class="powerup">
+          <div class="t" id="powerup2" style="display: none;">
+            Dash
+          </div>
+        </div>
+
+        <div class="powerup">
+          <div class="t" id="powerup3" style="display: none;">
+            <div>Wall</div><div>Jump</div>
+          </div>
+        </div>
+
+        <div class="powerup">
+          <div class="t" id="powerup4" style="display: none;">
+            <div>Wall</div><div>Jump</div>
+          </div>
+        </div>
+
+        <div class="powerup">
+          <div class="t" id="powerup5" style="display: none;">
+            <div>Wall</div><div>Jump</div>
+          </div>
+        </div>
+
+        <div class="powerup">
+          <div class="t" id="powerup6" style="display: none;">
+            <div>Wall</div><div>Jump</div>
+          </div>
+        </div>
+
+        <div class="powerup">
+          <div class="t" id="powerup7" style="display: none;">
+            <div>Wall</div><div>Jump</div>
+          </div>
+        </div>
+
+        <div class="powerup">
+          <div class="t" id="powerup8" style="display: none;">
+            <div>Wall</div><div>Jump</div>
+          </div>
+        </div>
       </div>
     </div>
     <script type="module" src="bundle.js"></script>

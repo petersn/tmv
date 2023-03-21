@@ -155,12 +155,12 @@ pub type EntityId = i32;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CharState {
-  pub save_point:  Vec2,
-  pub hp:          Cell<i32>,
-  pub power_ups:   HashSet<String>,
-  pub coins:       HashSet<EntityId>,
-  pub rare_coins:  HashSet<EntityId>,
-  pub hp_ups:      HashSet<EntityId>,
+  pub save_point: Vec2,
+  pub hp:         Cell<i32>,
+  pub power_ups:  HashSet<String>,
+  pub coins:      HashSet<EntityId>,
+  pub rare_coins: HashSet<EntityId>,
+  pub hp_ups:     HashSet<EntityId>,
 }
 
 impl CharState {
@@ -172,12 +172,12 @@ impl CharState {
 impl Default for CharState {
   fn default() -> Self {
     Self {
-      save_point:  Vec2::default(),
-      hp:          Cell::new(1),
-      power_ups:   HashSet::new(),
-      coins:       HashSet::new(),
-      rare_coins:  HashSet::new(),
-      hp_ups:      HashSet::new(),
+      save_point: Vec2::default(),
+      hp:         Cell::new(1),
+      power_ups:  HashSet::new(),
+      coins:      HashSet::new(),
+      rare_coins: HashSet::new(),
+      hp_ups:     HashSet::new(),
     }
   }
 }
@@ -240,11 +240,15 @@ pub struct GameState {
   draw_context:              DrawContext,
   keys_held:                 HashSet<String>,
   jump_hit:                  bool,
+  dash_hit:                  bool,
+  interact_hit:              bool,
   camera_pos:                Vec2,
   game_map:                  Rc<GameMap>,
   collision:                 CollisionWorld,
   player_physics:            PhysicsObjectHandle,
   player_vel:                Vec2,
+  have_dash:                 bool,
+  dash_time:                 f32,
   recently_blocked_to_left:  f32,
   recently_blocked_to_right: f32,
   grounded_last_frame:       bool,
@@ -258,6 +262,7 @@ pub struct GameState {
   saved_char_state:          CharState,
   objects:                   HashMap<ColliderHandle, GameObject>,
   death_animation:           f32,
+  facing_right:              bool,
 }
 
 #[wasm_bindgen]
@@ -328,11 +333,15 @@ impl GameState {
       draw_context,
       keys_held: HashSet::new(),
       jump_hit: false,
+      dash_hit: false,
+      interact_hit: false,
       camera_pos: Vec2::default(),
       game_map,
       collision,
       player_physics,
       player_vel: Vec2::default(),
+      have_dash: false,
+      dash_time: 0.0,
       recently_blocked_to_left: 0.0,
       recently_blocked_to_right: 0.0,
       touching_water: false,
@@ -346,6 +355,7 @@ impl GameState {
       saved_char_state: char_state,
       objects,
       death_animation: 0.0,
+      facing_right: true,
     })
   }
 
@@ -365,8 +375,12 @@ impl GameState {
     let event: InputEvent = serde_json::from_str(event).to_js_error()?;
     match event {
       InputEvent::KeyDown { key } => {
+        crate::log(&format!("Key down: {}", key));
         if key == "ArrowUp" {
           self.jump_hit = true;
+        }
+        if key == "Shift" {
+          self.dash_hit = true;
         }
         if key == " " && self.char_state.hp.get() <= 0 {
           self.respawn();
@@ -686,12 +700,12 @@ impl GameState {
     };
     if self.keys_held.contains("ArrowLeft") {
       self.player_vel.0 -= horizontal_dv * dt;
-    } else if self.player_vel.0 < 0.0 {
+    } else if self.player_vel.0 < 0.0 && self.dash_time <= 0.0 {
       self.player_vel.0 *= horizontal_decay_factor;
     }
     if self.keys_held.contains("ArrowRight") {
       self.player_vel.0 += horizontal_dv * dt;
-    } else if self.player_vel.0 > 0.0 {
+    } else if self.player_vel.0 > 0.0 && self.dash_time <= 0.0 {
       self.player_vel.0 *= horizontal_decay_factor;
     }
 
@@ -699,13 +713,21 @@ impl GameState {
       self.player_vel.1 *= 0.01f32.powf(dt);
     }
 
-    let (max_horiz_speed, gravity_accel, terminal_velocity) = match self.touching_water {
+    let (mut max_horiz_speed, gravity_accel, terminal_velocity) = match self.touching_water {
       true => (10.0, 20.0, 15.0),
       false => (15.0, 60.0, 30.0),
     };
 
+    max_horiz_speed *= match self.dash_time > 0.0 {
+      true => 2.0,
+      false => 1.0,
+    };
+
     self.player_vel.0 = self.player_vel.0.max(-max_horiz_speed).min(max_horiz_speed);
     self.player_vel.1 = (self.player_vel.1 + gravity_accel * dt).min(terminal_velocity);
+    if self.dash_time > 0.0 {
+      self.player_vel.1 = 0.0;
+    }
     let effective_motion = self.collision.move_object_with_character_controller(
       dt,
       &self.player_physics,
@@ -739,9 +761,10 @@ impl GameState {
     }
     if grounded {
       self.grounded_recently = JUMP_GRACE_PERIOD;
+      self.have_dash = self.char_state.power_ups.contains("dash");
     }
-    let wall_jump_allowed = self.recently_blocked_to_left > 0.0
-      || self.recently_blocked_to_right > 0.0;
+    let wall_jump_allowed = self.char_state.power_ups.contains("wall_jump")
+      && (self.recently_blocked_to_left > 0.0 || self.recently_blocked_to_right > 0.0);
     if self.jump_hit && (self.grounded_recently > 0.0 || wall_jump_allowed) {
       let abs_horizontal = self.player_vel.0.abs();
       let jump_multiplier = match self.touching_water {
@@ -760,11 +783,30 @@ impl GameState {
       self.recently_blocked_to_left = 0.0;
       self.recently_blocked_to_right = 0.0;
     }
+
+    if self.player_vel.0 > 0.1 {
+      self.facing_right = true;
+    } else if self.player_vel.0 < -0.1 {
+      self.facing_right = false;
+    }
+
+    if self.dash_hit && self.have_dash && self.dash_time <= 0.0 {
+      self.have_dash = false;
+      self.dash_time = 0.3;
+      self.player_vel.0 = match self.facing_right {
+        true => 100.0,
+        false => -100.0,
+      };
+    }
+
     self.jump_hit = false;
+    self.dash_hit = false;
+    self.interact_hit = false;
     self.grounded_last_frame = grounded;
     self.grounded_recently = (self.grounded_recently - dt).max(0.0);
     self.recently_blocked_to_left = (self.recently_blocked_to_left - dt).max(0.0);
     self.recently_blocked_to_right = (self.recently_blocked_to_right - dt).max(0.0);
+    self.dash_time = (self.dash_time - dt).max(0.0);
     Ok(())
   }
 
@@ -935,6 +977,7 @@ impl GameState {
             .fill_text(
               match &power_up[..] {
                 "wall_jump" => "WJ",
+                "dash" => "D",
                 _ => panic!("Unknown power up: {}", power_up),
               },
               (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,

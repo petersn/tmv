@@ -12,6 +12,11 @@ function rafLoop(timestamp: number) {
   document.getElementById('infoLine')!.innerText = infoLine;
   document.getElementById('hpIndicator')!.innerText = '❤️'.repeat(Math.max(0, powerupState.hp));
 
+  ["wall_jump", "dash", "x", "x", "x", "x", "x", "x"].map((powerUpName, i) => {
+    const havePowerUp = powerupState.power_ups.includes(powerUpName);
+    document.getElementById('powerup' + (i + 1))!.style.display = havePowerUp ? 'flex' : 'none';
+  });
+
   // const frameTime = timestamp - this.lastFrameTimestamp;
   // this.fps = 1000 / frameTime;
   // if (this.fpsCounterRef.current !== null) {

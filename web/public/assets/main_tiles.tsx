@@ -138,6 +138,12 @@
    <property name="name" value="coin_wall"/>
   </properties>
  </tile>
+ <tile id="41" class="marker">
+  <properties>
+   <property name="name" value="powerup"/>
+   <property name="powerup" value="dash"/>
+  </properties>
+ </tile>
  <tile id="47">
   <properties>
    <property name="count" type="int" value="10"/>
