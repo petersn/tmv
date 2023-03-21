@@ -97,7 +97,7 @@ impl CollisionWorld {
                 let handle = self.new_sensor_circle(
                   PhysicsKind::Sensor,
                   Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
-                  0.5,
+                  0.48,
                 );
                 let mut orientation = Vec2(1.0, 0.0);
                 if tile.flip_h {
