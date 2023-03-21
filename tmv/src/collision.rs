@@ -145,11 +145,21 @@ impl CollisionWorld {
                 let entity_id = 1_000_000 * tile_pos.1 + tile_pos.0;
                 match name {
                   "coin" | "rare_coin" | "hp_up" => {
-                    // If the player has already picked up this coin, skip it
+                    // If the player has already picked up this coin, skip it.
                     if char_state.coins.contains(&entity_id)
                       | char_state.rare_coins.contains(&entity_id)
                       | char_state.hp_ups.contains(&entity_id)
                     {
+                      continue;
+                    }
+                  }
+                  "powerup" => {
+                    let power_up: &str = match base_tile.properties.get("powerup") {
+                      Some(tiled::PropertyValue::StringValue(s)) => s,
+                      _ => panic!("Powerup without powerup property"),
+                    };
+                    // If the player has already picked up this powerup, skip it.
+                    if char_state.power_ups.contains(power_up) {
                       continue;
                     }
                   }
@@ -205,6 +215,20 @@ impl CollisionWorld {
                       GameObject {
                         physics_handle: handle,
                         data:           GameObjectData::HpUp { entity_id },
+                      },
+                    );
+                  }
+                  "powerup" => {
+                    let power_up: &str = match base_tile.properties.get("powerup") {
+                      Some(tiled::PropertyValue::StringValue(s)) => s,
+                      _ => panic!("Powerup without powerup property"),
+                    };
+                    let handle = make_circle(0.45);
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::PowerUp { power_up: power_up.to_string() },
                       },
                     );
                   }

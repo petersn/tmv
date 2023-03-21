@@ -13,7 +13,7 @@ use js_sys::Array;
 use math::{Rect, Vec2};
 use rapier2d::{
   na::Vector2,
-  prelude::{ColliderHandle, Cuboid, InteractionGroups, Isometry, QueryFilter, Shape, Group},
+  prelude::{ColliderHandle, Cuboid, Group, InteractionGroups, Isometry, QueryFilter, Shape},
 };
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -157,7 +157,7 @@ pub type EntityId = i32;
 pub struct CharState {
   pub save_point:  Vec2,
   pub hp:          Cell<i32>,
-  pub double_jump: bool,
+  pub power_ups:   HashSet<String>,
   pub coins:       HashSet<EntityId>,
   pub rare_coins:  HashSet<EntityId>,
   pub hp_ups:      HashSet<EntityId>,
@@ -174,7 +174,7 @@ impl Default for CharState {
     Self {
       save_point:  Vec2::default(),
       hp:          Cell::new(1),
-      double_jump: false,
+      power_ups:   HashSet::new(),
       coins:       HashSet::new(),
       rare_coins:  HashSet::new(),
       hp_ups:      HashSet::new(),
@@ -191,6 +191,9 @@ pub enum GameObjectData {
   },
   HpUp {
     entity_id: EntityId,
+  },
+  PowerUp {
+    power_up: String,
   },
   CoinWall {
     count: i32,
@@ -228,31 +231,33 @@ macro_rules! take_damage {
       $self.char_state.hp.set($self.char_state.hp.get() - $damage);
       $self.damage_blink.set(1.0);
     }
-  }}
+  }};
 }
 
 #[wasm_bindgen]
 pub struct GameState {
-  resources:           HashMap<String, Vec<u8>>,
-  draw_context:        DrawContext,
-  keys_held:           HashSet<String>,
-  jump_hit:            bool,
-  camera_pos:          Vec2,
-  game_map:            Rc<GameMap>,
-  collision:           CollisionWorld,
-  player_physics:      PhysicsObjectHandle,
-  player_vel:          Vec2,
-  grounded_last_frame: bool,
-  grounded_recently:   f32,
-  touching_water:      bool,
-  submerged_in_water:  bool,
-  air_remaining:       f32,
-  damage_blink:        Cell<f32>,
-  suppress_air_meter:  bool,
-  char_state:          CharState,
-  saved_char_state:    CharState,
-  objects:             HashMap<ColliderHandle, GameObject>,
-  death_animation:     f32,
+  resources:                 HashMap<String, Vec<u8>>,
+  draw_context:              DrawContext,
+  keys_held:                 HashSet<String>,
+  jump_hit:                  bool,
+  camera_pos:                Vec2,
+  game_map:                  Rc<GameMap>,
+  collision:                 CollisionWorld,
+  player_physics:            PhysicsObjectHandle,
+  player_vel:                Vec2,
+  recently_blocked_to_left:  f32,
+  recently_blocked_to_right: f32,
+  grounded_last_frame:       bool,
+  grounded_recently:         f32,
+  touching_water:            bool,
+  submerged_in_water:        bool,
+  air_remaining:             f32,
+  damage_blink:              Cell<f32>,
+  suppress_air_meter:        bool,
+  char_state:                CharState,
+  saved_char_state:          CharState,
+  objects:                   HashMap<ColliderHandle, GameObject>,
+  death_animation:           f32,
 }
 
 #[wasm_bindgen]
@@ -328,6 +333,8 @@ impl GameState {
       collision,
       player_physics,
       player_vel: Vec2::default(),
+      recently_blocked_to_left: 0.0,
+      recently_blocked_to_right: 0.0,
       touching_water: false,
       submerged_in_water: false,
       air_remaining: 0.0,
@@ -471,6 +478,15 @@ impl GameState {
                 object.data = GameObjectData::DeleteMe;
                 self.char_state.hp_ups.insert(entity_id);
                 self.char_state.reset_hp();
+              }
+              GameObjectData::PowerUp { .. } => {
+                match &object.data {
+                  GameObjectData::PowerUp { power_up } => {
+                    self.char_state.power_ups.insert(power_up.clone());
+                  }
+                  _ => unreachable!(),
+                }
+                object.data = GameObjectData::DeleteMe;
               }
               GameObjectData::Spike => take_damage!(self, 100),
               GameObjectData::Bullet { .. } => {
@@ -663,7 +679,7 @@ impl GameState {
     };
     let horizontal_dv = match self.grounded_last_frame {
       true => 150.0,
-      false => 50.0,
+      false => 25.0,
     } * match self.touching_water {
       true => 0.2,
       false => 1.0,
@@ -711,9 +727,11 @@ impl GameState {
     let blocked_to_top =
       self.player_vel.1 < 0.0 && effective_motion.translation.y > dt * self.player_vel.1 * 0.95;
     if blocked_to_left {
+      self.recently_blocked_to_left = 0.2;
       self.player_vel.0 = self.player_vel.0.max(0.0);
     }
     if blocked_to_right {
+      self.recently_blocked_to_right = 0.2;
       self.player_vel.0 = self.player_vel.0.min(0.0);
     }
     if blocked_to_top {
@@ -722,18 +740,31 @@ impl GameState {
     if grounded {
       self.grounded_recently = JUMP_GRACE_PERIOD;
     }
-    if self.jump_hit && self.grounded_recently > 0.0 {
+    let wall_jump_allowed = self.recently_blocked_to_left > 0.0
+      || self.recently_blocked_to_right > 0.0;
+    if self.jump_hit && (self.grounded_recently > 0.0 || wall_jump_allowed) {
       let abs_horizontal = self.player_vel.0.abs();
       let jump_multiplier = match self.touching_water {
         true => 0.5,
         false => 1.0,
       };
       self.player_vel.1 = (-22.0 - 0.2 * abs_horizontal) * jump_multiplier;
+      if self.grounded_recently <= 0.0 {
+        if self.recently_blocked_to_left > 0.0 {
+          self.player_vel.0 = max_horiz_speed;
+        } else if self.recently_blocked_to_right > 0.0 {
+          self.player_vel.0 = -max_horiz_speed;
+        }
+      }
       self.grounded_recently = 0.0;
+      self.recently_blocked_to_left = 0.0;
+      self.recently_blocked_to_right = 0.0;
     }
     self.jump_hit = false;
     self.grounded_last_frame = grounded;
     self.grounded_recently = (self.grounded_recently - dt).max(0.0);
+    self.recently_blocked_to_left = (self.recently_blocked_to_left - dt).max(0.0);
+    self.recently_blocked_to_right = (self.recently_blocked_to_right - dt).max(0.0);
     Ok(())
   }
 
@@ -808,7 +839,7 @@ impl GameState {
 
     // Draw all of the objects.
     for (_handle, object) in &self.objects {
-      match object.data {
+      match &object.data {
         GameObjectData::Coin { .. }
         | GameObjectData::RareCoin { .. }
         | GameObjectData::Bullet { .. } => {
@@ -872,6 +903,40 @@ impl GameState {
           contexts[MAIN_LAYER]
             .fill_text(
               "+HP",
+              (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+              (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+            )
+            .unwrap();
+        }
+        GameObjectData::PowerUp { power_up } => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          // Draw a circle, with a different color outside.
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#00f"));
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#002"));
+          contexts[MAIN_LAYER].set_line_width(5.0);
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER]
+            .arc(
+              (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+              (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+              (TILE_SIZE * 0.75) as f64,
+              0.0,
+              2.0 * std::f64::consts::PI,
+            )
+            .unwrap();
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].stroke();
+          // Put text in the middle.
+          contexts[MAIN_LAYER].set_font("24px Arial");
+          contexts[MAIN_LAYER].set_text_align("center");
+          contexts[MAIN_LAYER].set_text_baseline("middle");
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#002"));
+          contexts[MAIN_LAYER]
+            .fill_text(
+              match &power_up[..] {
+                "wall_jump" => "WJ",
+                _ => panic!("Unknown power up: {}", power_up),
+              },
               (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
               (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
             )
