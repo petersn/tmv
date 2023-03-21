@@ -1,13 +1,13 @@
 use std::{
   collections::{HashMap, HashSet},
-  rc::Rc,
+  rc::Rc, cell::Cell,
 };
 
-use collision::{CollisionWorld, PhysicsObjectHandle};
+use collision::{CollisionWorld, PhysicsObjectHandle, PhysicsKind};
 use game_maps::GameMap;
 use js_sys::Array;
 use math::{Rect, Vec2};
-use rapier2d::prelude::{QueryFilter, Shape, ColliderHandle};
+use rapier2d::prelude::{ColliderHandle, QueryFilter, Shape};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tile_rendering::TileRenderer;
@@ -28,6 +28,7 @@ const MAIN_LAYER: usize = 1;
 const BACKGROUND_LAYER: usize = 2;
 const SCRATCH_LAYER: usize = 3;
 const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
+const JUMP_GRACE_PERIOD: f32 = 0.1;
 //const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
@@ -54,12 +55,14 @@ impl<T> IntoJsError for Option<T> {
 #[derive(Debug, Clone, strum_macros::EnumIter, PartialEq, Eq, Hash)]
 pub enum ImageResource {
   WorldProperties,
+  MainTiles,
 }
 
 impl ImageResource {
   pub fn get_path(&self) -> &'static str {
     match self {
       ImageResource::WorldProperties => "/assets/images/colors_tileset.png",
+      ImageResource::MainTiles => "/assets/images/main_tiles.png",
     }
   }
 
@@ -87,6 +90,7 @@ pub fn get_all_image_paths() -> Array {
 pub enum BinaryResource {
   Map1,
   WorldProperties,
+  MainTiles,
 }
 
 impl BinaryResource {
@@ -94,6 +98,7 @@ impl BinaryResource {
     match self {
       BinaryResource::Map1 => "/assets/map1.tmx",
       BinaryResource::WorldProperties => "/assets/world_properties.tsx",
+      BinaryResource::MainTiles => "/assets/main_tiles.tsx",
     }
   }
 }
@@ -156,12 +161,15 @@ impl Default for PowerUpState {
 pub enum GameObjectData {
   Coin,
   RareCoin,
+  Spike,
+  Shooter1 { orientation: Vec2, cooldown: Cell<f32>, shoot_period: f32 },
+  Bullet { velocity: Vec2 },
   DeleteMe,
 }
 
 pub struct GameObject {
   pub physics_handle: PhysicsObjectHandle,
-  pub data: GameObjectData,
+  pub data:           GameObjectData,
 }
 
 #[wasm_bindgen]
@@ -175,8 +183,11 @@ pub struct GameState {
   player_physics:      PhysicsObjectHandle,
   player_vel:          Vec2,
   grounded_last_frame: bool,
+  grounded_recently:   f32,
   powerup_state:       PowerUpState,
   objects:             HashMap<ColliderHandle, GameObject>,
+  hp:                  i32,
+  death_animation:     f32,
 }
 
 #[wasm_bindgen]
@@ -225,10 +236,10 @@ impl GameState {
     let mut collision = collision::CollisionWorld::new();
     collision.load_game_map(&game_map, &mut objects);
     let player_physics = collision.new_cuboid(
-      collision::PhysicsKind::Sensor,
+      PhysicsKind::Sensor,
       collision.spawn_point,
       PLAYER_SIZE,
-      0.4,
+      0.25,
     );
 
     crate::log("... 2");
@@ -252,13 +263,23 @@ impl GameState {
       player_physics,
       player_vel: Vec2::default(),
       grounded_last_frame: false,
+      grounded_recently: 0.0,
       powerup_state: PowerUpState::default(),
       objects,
+      hp: 3,
+      death_animation: 0.0,
     })
   }
 
   pub fn get_powerup_state(&self) -> JsValue {
     serde_wasm_bindgen::to_value(&self.powerup_state).unwrap()
+  }
+
+  pub fn get_info_line(&self) -> String {
+    format!(
+      "Coins: {:3}   Rare Coins: {:3}",
+      self.powerup_state.coins, self.powerup_state.rare_coins,
+    )
   }
 
   pub fn apply_input_event(&mut self, event: &str) -> Result<(), JsValue> {
@@ -268,6 +289,9 @@ impl GameState {
         if key == "ArrowUp" {
           self.jump_hit = true;
         }
+        if key == " " && self.hp <= 0 {
+          self.respawn();
+        }
         self.keys_held.insert(key);
       }
       InputEvent::KeyUp { key } => {
@@ -275,6 +299,28 @@ impl GameState {
       }
     }
     Ok(())
+  }
+
+  pub fn respawn(&mut self) {
+    self.hp = 3;
+    self.death_animation = 0.0;
+    self.collision.set_position(&self.player_physics, self.collision.spawn_point);
+    self.player_vel = Vec2::default();
+  }
+
+  fn create_bullet(&mut self, location: Vec2, velocity: Vec2) -> (ColliderHandle, GameObject) {
+    let physics_handle = self.collision.new_sensor_circle(
+      collision::PhysicsKind::Sensor,
+      location,
+      0.5,
+    );
+    (
+      physics_handle.collider,
+      GameObject {
+        physics_handle,
+        data: GameObjectData::Bullet { velocity },
+      },
+    )
   }
 
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
@@ -303,12 +349,43 @@ impl GameState {
     //   crate::log(&format!("Received trigger event: {:?}", contact_force_event));
     // }
 
+    let mut new_objects = Vec::new();
+    for (handle, object) in self.objects {
+      match &object.data {
+        GameObjectData::Shooter1 { orientation: _, cooldown, shoot_period } => {
+          cooldown.set(cooldown.get() - dt);
+          if cooldown.get() <= 0.0 {
+            cooldown.set(*shoot_period);
+            new_objects.push(self.create_bullet(
+              self.collision.get_position(&object.physics_handle).unwrap(),
+              Vec2(0.0, 1.0),
+            ));
+          }
+        }
+        _ => {}
+      }
+    }
+    for (handle, object) in new_objects {
+      self.objects.insert(handle, object);
+    }
+
+    // Don't do anything else if we're dead.
+    if self.hp <= 0 {
+      self.death_animation += dt;
+      return Ok(());
+    }
+
     let filter = QueryFilter::default();
 
     // Get the shape and pos of the player collider.
     if let Some((shape, pos)) = self.collision.get_shape_and_position(&self.player_physics) {
       self.collision.query_pipeline.intersections_with_shape(
-        &self.collision.rigid_body_set, &self.collision.collider_set, pos, shape, filter, |handle| {
+        &self.collision.rigid_body_set,
+        &self.collision.collider_set,
+        pos,
+        shape,
+        filter,
+        |handle| {
           if let Some(object) = self.objects.get_mut(&handle) {
             match object.data {
               GameObjectData::Coin => {
@@ -319,11 +396,16 @@ impl GameState {
                 object.data = GameObjectData::DeleteMe;
                 self.powerup_state.rare_coins += 1;
               }
-              GameObjectData::DeleteMe => {}
+              GameObjectData::Spike => self.hp -= 100,
+              GameObjectData::Bullet { .. } => {
+                self.hp -= 1;
+                object.data = GameObjectData::DeleteMe;
+              }
+              GameObjectData::Shooter1 { .. } | GameObjectData::DeleteMe => {}
             }
           }
           true // Return `false` instead if we want to stop searching for other colliders that contain this point.
-        }
+        },
       );
     }
     // Remove deleted objects.
@@ -331,6 +413,10 @@ impl GameState {
       GameObjectData::DeleteMe => false,
       _ => true,
     });
+
+    //self.hp = 3;
+    //self.powerup_state = PowerUpState::default();
+    //self.collision.set_position(&self.player_physics, self.collision.spawn_point);
 
     // self.player_pos = new_pos;
     // if has_collision {
@@ -368,7 +454,7 @@ impl GameState {
       self.player_vel.1 *= 0.01f32.powf(dt);
     }
 
-    self.player_vel.0 = self.player_vel.0.max(-20.0).min(20.0);
+    self.player_vel.0 = self.player_vel.0.max(-15.0).min(15.0);
     self.player_vel.1 = (self.player_vel.1 + 60.0 * dt).min(30.0);
     let effective_motion = self.collision.move_object_with_character_controller(
       dt,
@@ -397,12 +483,17 @@ impl GameState {
     if blocked_to_top {
       self.player_vel.1 = self.player_vel.1.max(0.0);
     }
-    if self.jump_hit && grounded {
+    if grounded {
+      self.grounded_recently = JUMP_GRACE_PERIOD;
+    }
+    if self.jump_hit && self.grounded_recently > 0.0 {
       let abs_horizontal = self.player_vel.0.abs();
-      self.player_vel.1 = -30.0 - 0.1 * abs_horizontal;
+      self.player_vel.1 = -22.0 - 0.1 * abs_horizontal;
+      self.grounded_recently = 0.0;
     }
     self.jump_hit = false;
     self.grounded_last_frame = grounded;
+    self.grounded_recently = (self.grounded_recently - dt).max(0.0);
     Ok(())
   }
 
@@ -446,15 +537,17 @@ impl GameState {
     contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("red"));
     contexts[MAIN_LAYER].fill_rect(
       (TILE_SIZE * (player_pos.0 - self.camera_pos.0 - PLAYER_SIZE.0 / 2.0)) as f64,
-      (TILE_SIZE * (player_pos.1 - self.camera_pos.1 - PLAYER_SIZE.1 / 2.0)) as f64,
+      (TILE_SIZE
+        * (player_pos.1 - self.camera_pos.1 - PLAYER_SIZE.1 / 2.0 + 10.0 * self.death_animation))
+        as f64,
       (TILE_SIZE * PLAYER_SIZE.0) as f64,
-      (TILE_SIZE * PLAYER_SIZE.1) as f64,
+      (TILE_SIZE * (PLAYER_SIZE.1 - 10.0 * self.death_animation).max(0.0)) as f64,
     );
 
     // Draw all of the objects.
     for (handle, object) in &self.objects {
       match object.data {
-        GameObjectData::Coin | GameObjectData::RareCoin => {
+        GameObjectData::Coin | GameObjectData::RareCoin | GameObjectData::Bullet { .. } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           // Draw a circle, with a different color outside.
           match object.data {
@@ -463,8 +556,12 @@ impl GameState {
               contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#aa0"));
             }
             GameObjectData::RareCoin => {
-              contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#0ff"));
-              contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#0aa"));
+              contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#04a"));
+              contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#026"));
+            }
+            GameObjectData::Bullet { .. } => {
+              contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#f00"));
+              contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#a00"));
             }
             _ => unreachable!(),
           }
@@ -480,7 +577,7 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
-        GameObjectData::DeleteMe => {}
+        GameObjectData::Shooter1 { .. } | GameObjectData::Spike | GameObjectData::DeleteMe => {}
       }
     }
 

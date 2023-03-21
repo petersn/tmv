@@ -1,13 +1,15 @@
-use tiled::Chunk;
-use std::{rc::Rc, collections::HashMap};
+use std::{collections::HashMap, rc::Rc, cell::Cell};
 
 use rapier2d::{
   control::{EffectiveCharacterMovement, KinematicCharacterController},
-  na::Vector2,
+  na::{Isometry2, Vector2},
   prelude::*,
 };
+use tiled::Chunk;
 
-use crate::{game_maps::GameMap, math::Vec2, tile_rendering::TILE_SIZE, GameObject, GameObjectData};
+use crate::{
+  game_maps::GameMap, math::Vec2, tile_rendering::TILE_SIZE, GameObject, GameObjectData,
+};
 
 pub enum PhysicsKind {
   Static,
@@ -70,9 +72,14 @@ impl CollisionWorld {
     }
   }
 
-  pub fn load_game_map(&mut self, game_map: &GameMap, objects: &mut HashMap<ColliderHandle, GameObject>) {
-    let things_layer = game_map.map.layers().find(|l| l.name == "Things").unwrap();
-    match things_layer.layer_type() {
+  pub fn load_game_map(
+    &mut self,
+    game_map: &GameMap,
+    objects: &mut HashMap<ColliderHandle, GameObject>,
+  ) {
+    // The main layer includes some objects, like spikes.
+    let main_layer = game_map.map.layers().find(|l| l.name == "Main").unwrap();
+    match main_layer.layer_type() {
       tiled::LayerType::TileLayer(tiled::TileLayer::Infinite(data)) => {
         for (chunk_pos, chunk) in data.chunks() {
           for x in 0..Chunk::WIDTH as i32 {
@@ -82,40 +89,78 @@ impl CollisionWorld {
                   chunk_pos.0 * Chunk::WIDTH as i32 + x,
                   chunk_pos.1 * Chunk::HEIGHT as i32 + y,
                 );
-                crate::log(&format!("Tile: {:?} @ {:?}", tile.id(), tile_pos));
-                match tile.id() {
+                let base_tile = tile.get_tile().unwrap();
+                let name: &str = match base_tile.properties.get("name") {
+                  Some(tiled::PropertyValue::StringValue(s)) => s,
+                  _ => continue,
+                };
+                let handle = self.new_sensor_circle(
+                  PhysicsKind::Sensor,
+                  Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
+                  0.5,
+                );
+                let mut orientation = Vec2(1.0, 0.0);
+                if tile.flip_h {
+                  orientation.0 *= -1.0;
+                }
+                if tile.flip_v {
+                  orientation.1 *= -1.0;
+                }
+                if tile.flip_d {
+                  (orientation.0, orientation.1) = (orientation.1, orientation.0);
+                }
+                match name {
                   // Coin
-                  4 => {
-                    let handle = self.new_sensor_circle(
-                      PhysicsKind::Sensor,
-                      Vec2(tile_pos.0 as f32, tile_pos.1 as f32),
-                      0.5,
+                  "coin" => {
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Coin,
+                      },
                     );
-                    objects.insert(handle.collider, GameObject {
-                      physics_handle: handle,
-                      data:           GameObjectData::Coin,
-                    });
                   }
                   // Rare coin
-                  9 => {
-                    let handle = self.new_sensor_circle(
-                      PhysicsKind::Sensor,
-                      Vec2(tile_pos.0 as f32, tile_pos.1 as f32),
-                      0.5,
+                  "rare_coin" => {
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::RareCoin,
+                      },
                     );
-                    objects.insert(handle.collider, GameObject {
-                      physics_handle: handle,
-                      data:           GameObjectData::RareCoin,
-                    });
                   }
-                  _ => panic!("Unsupported tile: {:?}", tile.id()),
+                  "spike" => {
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Spike,
+                      },
+                    );
+                  }
+                  "shooter1" => {
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Shooter1 {
+                          orientation,
+                          cooldown: Cell::new(2.0),
+                          shoot_period: 2.0,
+                        },
+                      },
+                    );
+                  }
+                  "spawn" => self.spawn_point = Vec2(tile_pos.0 as f32, tile_pos.1 as f32),
+                  _ => panic!("Unsupported tile name: {}", name),
                 }
               }
             }
           }
         }
       }
-      _ => panic!("Unsupported layer type: {:?}", things_layer.layer_type()),
+      _ => panic!("Unsupported layer type: {:?}", main_layer.layer_type()),
     }
 
     let collision_layer = game_map.map.layers().find(|l| l.name == "Collision").unwrap();
@@ -123,20 +168,6 @@ impl CollisionWorld {
       tiled::LayerType::ObjectLayer(object_layer) => {
         for object in object_layer.objects() {
           match &object.shape {
-            tiled::ObjectShape::Rect { width, height } => {
-              // Check for a property.
-              for (prop_name, prop_value) in &object.properties {
-                if prop_name == "type" {
-                  match prop_value {
-                    tiled::PropertyValue::StringValue(s) if s == "spawn" => {
-                      self.spawn_point =
-                        Vec2(object.x + width / 2.0, object.y + height / 2.0) / TILE_SIZE;
-                    }
-                    _ => panic!("Unsupported property value: {:?}", prop_value),
-                  }
-                }
-              }
-            }
             tiled::ObjectShape::Polyline { points } | tiled::ObjectShape::Polygon { points } => {
               //crate::log(&format!("Polygon: {:?} @ ({}, {})", points, object.x, object.y));
               let mut points =
@@ -271,7 +302,16 @@ impl CollisionWorld {
     Some(Vec2(position.x, position.y))
   }
 
-  pub fn get_shape_and_position(&self, handle: &PhysicsObjectHandle) -> Option<(&dyn Shape, &Isometry<Real>)> {
+  pub fn set_position(&mut self, handle: &PhysicsObjectHandle, position: Vec2) {
+    let rigid_body = self.rigid_body_set.get_mut(handle.rigid_body.unwrap()).unwrap();
+    rigid_body.set_translation(Vector2::new(position.0, position.1), true);
+    rigid_body.set_linvel(Vector2::zeros(), true);
+  }
+
+  pub fn get_shape_and_position(
+    &self,
+    handle: &PhysicsObjectHandle,
+  ) -> Option<(&dyn Shape, &Isometry<Real>)> {
     let rigid_body = self.rigid_body_set.get(handle.rigid_body?)?;
     let collider = self.collider_set.get(handle.collider)?;
     Some((collider.shape(), rigid_body.position()))

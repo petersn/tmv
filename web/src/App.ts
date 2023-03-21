@@ -7,7 +7,8 @@ let lastTimestamp: number | null = null;
 
 function rafLoop(timestamp: number) {
   const powerupState = gameState!.get_powerup_state();
-  document.getElementById('coins')!.innerText = powerupState.coins.toString();
+  const infoLine = gameState!.get_info_line();
+  document.getElementById('infoLine')!.innerText = infoLine;
 
   // const frameTime = timestamp - this.lastFrameTimestamp;
   // this.fps = 1000 / frameTime;

@@ -83,6 +83,13 @@ impl TileRenderer {
               for tile_y in 0..tiled::Chunk::HEIGHT as i32 {
                 for tile_x in 0..tiled::Chunk::WIDTH as i32 {
                   if let Some(tile) = chunk.get_tile(tile_x, tile_y) {
+                    let base_tile = tile.get_tile().unwrap();
+                    if let Some(user_type) = &base_tile.user_type {
+                      if user_type == "marker" {
+                        continue;
+                      }
+                    }
+
                     let tileset_index = tile.tileset_index();
                     //let (ts_x, ts_y) = tileset_index_and_id_to_pos[&(tileset_index, tile.id())];
                     let ts = tile.get_tileset();
