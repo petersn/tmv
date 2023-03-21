@@ -123,13 +123,15 @@ impl CollisionWorld {
                   Some(tiled::PropertyValue::StringValue(s)) => s,
                   _ => continue,
                 };
-                let handle = self.new_circle(
-                  PhysicsKind::Sensor,
-                  Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
-                  0.48,
-                  true,
-                  None,
-                );
+                let mut make_circle = |radius| {
+                  self.new_circle(
+                    PhysicsKind::Sensor,
+                    Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
+                    radius,
+                    true,
+                    None,
+                  )
+                };
                 let mut orientation = Vec2(1.0, 0.0);
                 if tile.flip_d {
                   (orientation.0, orientation.1) = (orientation.1, orientation.0);
@@ -142,10 +144,11 @@ impl CollisionWorld {
                 }
                 let entity_id = 1_000_000 * tile_pos.1 + tile_pos.0;
                 match name {
-                  "coin" | "rare_coin" => {
+                  "coin" | "rare_coin" | "hp_up" => {
                     // If the player has already picked up this coin, skip it
                     if char_state.coins.contains(&entity_id)
                       | char_state.rare_coins.contains(&entity_id)
+                      | char_state.hp_ups.contains(&entity_id)
                     {
                       continue;
                     }
@@ -154,6 +157,7 @@ impl CollisionWorld {
                 }
                 match name {
                   "water" => {
+                    let handle = make_circle(0.45);
                     objects.insert(
                       handle.collider,
                       GameObject {
@@ -162,8 +166,19 @@ impl CollisionWorld {
                       },
                     );
                   }
+                  "lava" => {
+                    let handle = make_circle(0.45);
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Lava,
+                      },
+                    );
+                  }
                   // Coin
                   "coin" => {
+                    let handle = make_circle(0.45);
                     objects.insert(
                       handle.collider,
                       GameObject {
@@ -174,6 +189,7 @@ impl CollisionWorld {
                   }
                   // Rare coin
                   "rare_coin" => {
+                    let handle = make_circle(0.45);
                     objects.insert(
                       handle.collider,
                       GameObject {
@@ -182,7 +198,18 @@ impl CollisionWorld {
                       },
                     );
                   }
+                  "hp_up" => {
+                    let handle = make_circle(0.45);
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::HpUp { entity_id },
+                      },
+                    );
+                  }
                   "spike" => {
+                    let handle = make_circle(0.45);
                     objects.insert(
                       handle.collider,
                       GameObject {
@@ -192,19 +219,58 @@ impl CollisionWorld {
                     );
                   }
                   "shooter1" => {
+                    let handle = make_circle(0.45);
                     objects.insert(
                       handle.collider,
                       GameObject {
                         physics_handle: handle,
                         data:           GameObjectData::Shooter1 {
                           orientation,
-                          cooldown: Cell::new(1.0),
-                          shoot_period: 1.0,
+                          cooldown: Cell::new(1.25),
+                          shoot_period: 1.25,
                         },
                       },
                     );
                   }
+                  "coin_wall" => {
+                    let count: i32 = match base_tile.properties.get("count") {
+                      Some(tiled::PropertyValue::IntValue(count)) => *count,
+                      Some(_) => panic!("count must be an int"),
+                      _ => continue,
+                    };
+                    let handle = self.new_cuboid(
+                      PhysicsKind::Static,
+                      Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
+                      Vec2(0.6, 0.6),
+                      0.05,
+                      WALLS_INT_GROUPS,
+                    );
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::CoinWall { count },
+                      },
+                    );
+                  }
+                  "stone" => {
+                    let handle = self.new_cuboid(
+                      PhysicsKind::Static,
+                      Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
+                      Vec2(1.0, 1.0),
+                      0.05,
+                      WALLS_INT_GROUPS,
+                    );
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Stone,
+                      },
+                    );
+                  }
                   "save_left" => {
+                    let handle = make_circle(0.45);
                     // Because only the left tile in the save point gets an entity, we shift it over half a tile.
                     self.set_position(
                       &handle,
@@ -219,7 +285,6 @@ impl CollisionWorld {
                     );
                   }
                   "platform" => {
-                    self.remove_object(handle);
                     let handle = self.new_static_walls(
                       (tile_pos.0 as f32, tile_pos.1 as f32),
                       &[(0.0, 0.3), (1.0, 0.3)],
@@ -406,6 +471,7 @@ impl CollisionWorld {
     position: Vec2,
     size: Vec2,
     rounding: f32,
+    int_groups: InteractionGroups,
   ) -> PhysicsObjectHandle {
     let rigid_body = match kind {
       PhysicsKind::Static => RigidBodyBuilder::fixed(),
@@ -418,7 +484,7 @@ impl CollisionWorld {
     let rigid_body = self.rigid_body_set.insert(rigid_body);
     let collider = self.collider_set.insert_with_parent(
       ColliderBuilder::round_cuboid(size.0 / 2.0 - rounding, size.1 / 2.0 - rounding, rounding)
-        .collision_groups(BASIC_INT_GROUPS),
+        .collision_groups(int_groups),
       rigid_body,
       &mut self.rigid_body_set,
     );

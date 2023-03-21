@@ -5,14 +5,15 @@ use std::{
 };
 
 use collision::{
-  CollisionWorld, PhysicsKind, PhysicsObjectHandle, BASIC_GROUP, PLAYER_GROUP, WALLS_GROUP,
+  CollisionWorld, PhysicsKind, PhysicsObjectHandle, BASIC_GROUP, BASIC_INT_GROUPS, PLAYER_GROUP,
+  WALLS_GROUP,
 };
 use game_maps::GameMap;
 use js_sys::Array;
 use math::{Rect, Vec2};
 use rapier2d::{
   na::Vector2,
-  prelude::{ColliderHandle, Cuboid, InteractionGroups, Isometry, QueryFilter, Shape},
+  prelude::{ColliderHandle, Cuboid, InteractionGroups, Isometry, QueryFilter, Shape, Group},
 };
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -36,6 +37,8 @@ const SCRATCH_LAYER: usize = 3;
 const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
 const JUMP_GRACE_PERIOD: f32 = 0.1;
 const UNDERWATER_TIME: f32 = 8.0;
+const SCREEN_WIDTH: f32 = 1200.0;
+const SCREEN_HEIGHT: f32 = 800.0;
 //const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
@@ -153,15 +156,16 @@ pub type EntityId = i32;
 #[derive(Debug, Clone, Serialize)]
 pub struct CharState {
   pub save_point:  Vec2,
-  pub hp:          i32,
+  pub hp:          Cell<i32>,
   pub double_jump: bool,
   pub coins:       HashSet<EntityId>,
   pub rare_coins:  HashSet<EntityId>,
+  pub hp_ups:      HashSet<EntityId>,
 }
 
 impl CharState {
   pub fn reset_hp(&mut self) {
-    self.hp = 3;
+    self.hp.set(self.hp_ups.len() as i32 + 1);
   }
 }
 
@@ -169,10 +173,11 @@ impl Default for CharState {
   fn default() -> Self {
     Self {
       save_point:  Vec2::default(),
-      hp:          3,
+      hp:          Cell::new(1),
       double_jump: false,
       coins:       HashSet::new(),
       rare_coins:  HashSet::new(),
+      hp_ups:      HashSet::new(),
     }
   }
 }
@@ -183,6 +188,12 @@ pub enum GameObjectData {
   },
   RareCoin {
     entity_id: EntityId,
+  },
+  HpUp {
+    entity_id: EntityId,
+  },
+  CoinWall {
+    count: i32,
   },
   Spike,
   SavePoint,
@@ -201,12 +212,23 @@ pub enum GameObjectData {
     currently_solid: bool,
     y:               f32,
   },
+  Stone,
+  DestroyedDoor,
   DeleteMe,
 }
 
 pub struct GameObject {
   pub physics_handle: PhysicsObjectHandle,
   pub data:           GameObjectData,
+}
+
+macro_rules! take_damage {
+  ($self: expr, $damage: expr) => {{
+    if $self.damage_blink.get() <= 0.0 {
+      $self.char_state.hp.set($self.char_state.hp.get() - $damage);
+      $self.damage_blink.set(1.0);
+    }
+  }}
 }
 
 #[wasm_bindgen]
@@ -225,6 +247,7 @@ pub struct GameState {
   touching_water:      bool,
   submerged_in_water:  bool,
   air_remaining:       f32,
+  damage_blink:        Cell<f32>,
   suppress_air_meter:  bool,
   char_state:          CharState,
   saved_char_state:    CharState,
@@ -283,6 +306,7 @@ impl GameState {
       collision.spawn_point,
       PLAYER_SIZE,
       0.25,
+      BASIC_INT_GROUPS,
     );
     char_state.save_point = collision.spawn_point;
 
@@ -307,6 +331,7 @@ impl GameState {
       touching_water: false,
       submerged_in_water: false,
       air_remaining: 0.0,
+      damage_blink: Cell::new(0.0),
       suppress_air_meter: false,
       grounded_last_frame: false,
       grounded_recently: 0.0,
@@ -336,7 +361,7 @@ impl GameState {
         if key == "ArrowUp" {
           self.jump_hit = true;
         }
-        if key == " " && self.char_state.hp <= 0 {
+        if key == " " && self.char_state.hp.get() <= 0 {
           self.respawn();
         }
         self.keys_held.insert(key);
@@ -351,6 +376,7 @@ impl GameState {
   pub fn respawn(&mut self) {
     self.char_state = self.saved_char_state.clone();
     self.death_animation = 0.0;
+    self.damage_blink.set(0.0);
     self.player_vel = Vec2::default();
 
     self.objects = HashMap::new();
@@ -362,6 +388,7 @@ impl GameState {
       self.char_state.save_point,
       PLAYER_SIZE,
       0.25,
+      BASIC_INT_GROUPS,
     );
   }
 
@@ -369,7 +396,7 @@ impl GameState {
     let physics_handle = self.collision.new_circle(
       collision::PhysicsKind::Dynamic,
       location,
-      0.5,
+      0.25,
       false,
       Some(InteractionGroups::new(
         BASIC_GROUP,
@@ -440,10 +467,15 @@ impl GameState {
                 object.data = GameObjectData::DeleteMe;
                 self.char_state.rare_coins.insert(entity_id);
               }
-              GameObjectData::Spike => self.char_state.hp -= 100,
+              GameObjectData::HpUp { entity_id } => {
+                object.data = GameObjectData::DeleteMe;
+                self.char_state.hp_ups.insert(entity_id);
+                self.char_state.reset_hp();
+              }
+              GameObjectData::Spike => take_damage!(self, 100),
               GameObjectData::Bullet { .. } => {
-                if self.char_state.hp > 0 {
-                  self.char_state.hp -= 1;
+                if self.char_state.hp.get() > 0 {
+                  take_damage!(self, 1);
                   object.data = GameObjectData::DeleteMe;
                 }
               }
@@ -452,7 +484,7 @@ impl GameState {
               }
               GameObjectData::Lava { .. } => {
                 // FIXME: Properly handle lava.
-                self.char_state.hp = 0;
+                take_damage!(self, 100);
               }
               GameObjectData::SavePoint => {
                 let save_point = &self.objects[&handle].physics_handle;
@@ -464,17 +496,18 @@ impl GameState {
               // Let the player drop through platforms they're colliding with.
               // FIXME: Is there a better idiom here, maybe using @?
               GameObjectData::Platform { .. } => match &mut object.data {
-                GameObjectData::Platform {
-                  currently_solid, y
-                } => {
+                GameObjectData::Platform { currently_solid, y } => {
                   // Collision depth is how deeply the player is embedded into the platform.
                   let collision_depth = player_y + PLAYER_SIZE.1 / 2.0 - *y;
-                  crate::log(&format!("Collision depth: {}", collision_depth));
                   *currently_solid = collision_depth < 0.01;
                 }
                 _ => unreachable!(),
               },
-              GameObjectData::Shooter1 { .. } | GameObjectData::DeleteMe => {}
+              GameObjectData::DestroyedDoor
+              | GameObjectData::Stone
+              | GameObjectData::CoinWall { .. }
+              | GameObjectData::Shooter1 { .. }
+              | GameObjectData::DeleteMe => {}
             }
           }
           true // Return `false` instead if we want to stop searching for other colliders that contain this point.
@@ -505,11 +538,14 @@ impl GameState {
       );
     }
 
+    // Process damage blink.
+    self.damage_blink.set(self.damage_blink.get() - dt);
+
     // Process water submergence.
     if self.submerged_in_water {
       self.air_remaining -= dt;
       if self.air_remaining <= 0.0 {
-        self.char_state.hp -= 1;
+        take_damage!(self, 1);
         self.air_remaining += 2.0;
         self.suppress_air_meter = true;
       }
@@ -528,7 +564,7 @@ impl GameState {
     });
 
     // Process object updates.
-    let mut calls = Vec::new();
+    let mut calls: Vec<Box<dyn FnMut(&mut Self)>> = Vec::new();
     for object in self.objects.values_mut() {
       match &mut object.data {
         GameObjectData::Shooter1 {
@@ -539,14 +575,14 @@ impl GameState {
           cooldown.set(cooldown.get() - dt);
           if cooldown.get() <= 0.0 {
             cooldown.set(*shoot_period);
-            let velocity = 10.0 * *orientation;
+            let velocity = 7.0 * *orientation;
             let physics_handle = object.physics_handle.clone();
-            calls.push(move |this: &mut Self| {
+            calls.push(Box::new(move |this: &mut Self| {
               this.create_bullet(
                 this.collision.get_position(&physics_handle).unwrap(),
                 velocity,
               )
-            });
+            }));
           }
         }
         GameObjectData::Bullet { velocity } => {
@@ -568,15 +604,38 @@ impl GameState {
             *currently_solid = true;
           }
         }
+        GameObjectData::CoinWall { count } => {
+          if self.char_state.coins.len() as i32 >= *count {
+            crate::log(&format!("Deleting coin wall with {} coins", count));
+            object.data = GameObjectData::DeleteMe;
+            let location = self.collision.get_position(&object.physics_handle).unwrap();
+            calls.push(Box::new(move |this: &mut Self| {
+              let physics_handle = this.collision.new_circle(
+                collision::PhysicsKind::Sensor,
+                location,
+                0.25,
+                false,
+                Some(InteractionGroups::new(Group::NONE, Group::NONE)),
+              );
+              this.objects.insert(
+                physics_handle.collider,
+                GameObject {
+                  physics_handle,
+                  data: GameObjectData::DestroyedDoor,
+                },
+              );
+            }));
+          }
+        }
         _ => {}
       }
     }
-    for f in calls {
+    for mut f in calls {
       f(self);
     }
 
     // Don't do anything else if we're dead.
-    if self.char_state.hp <= 0 {
+    if self.char_state.hp.get() <= 0 {
       self.death_animation += dt;
       return Ok(());
     }
@@ -669,7 +728,7 @@ impl GameState {
         true => 0.5,
         false => 1.0,
       };
-      self.player_vel.1 = (-22.0 - 0.1 * abs_horizontal) * jump_multiplier;
+      self.player_vel.1 = (-22.0 - 0.2 * abs_horizontal) * jump_multiplier;
       self.grounded_recently = 0.0;
     }
     self.jump_hit = false;
@@ -694,14 +753,14 @@ impl GameState {
 
     // Recenter the gamera.
     self.camera_pos = Vec2(
-      player_pos.0 - 400.0 / TILE_SIZE,
-      player_pos.1 - 400.0 / TILE_SIZE,
+      player_pos.0 - SCREEN_WIDTH / 2.0 / TILE_SIZE,
+      player_pos.1 - (SCREEN_HEIGHT / 2.0 + 50.0) / TILE_SIZE,
     );
 
     // Draw the game background.
     let draw_rect = Rect {
       pos:  TILE_SIZE * self.camera_pos,
-      size: Vec2(800.0, 600.0),
+      size: Vec2(SCREEN_WIDTH, SCREEN_HEIGHT),
     };
     tile_renderer.draw(
       draw_rect,
@@ -712,10 +771,32 @@ impl GameState {
     );
 
     // Clear the main layer.
-    contexts[MAIN_LAYER].clear_rect(0.0, 0.0, 800.0, 600.0);
+    contexts[MAIN_LAYER].clear_rect(0.0, 0.0, SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
+
+    // Draw all of the objects.
+    for (_handle, object) in &self.objects {
+      match object.data {
+        GameObjectData::DestroyedDoor => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          // Draw a 1x3 darkened rectangle.
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 0, 0.8)"));
+          contexts[MAIN_LAYER].fill_rect(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.5)) as f64 - 0.25,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 - 1.5)) as f64 - 0.25,
+            TILE_SIZE as f64 + 0.5,
+            (3.0 * TILE_SIZE) as f64 + 0.5,
+          );
+        }
+        _ => {}
+      }
+    }
 
     // Draw a red rectangle for the player.
-    contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("red"));
+    if self.damage_blink.get() % 0.2 > 0.1 {
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#f00"));
+    } else {
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#800"));
+    }
     contexts[MAIN_LAYER].fill_rect(
       (TILE_SIZE * (player_pos.0 - self.camera_pos.0 - PLAYER_SIZE.0 / 2.0)) as f64,
       (TILE_SIZE
@@ -733,28 +814,31 @@ impl GameState {
         | GameObjectData::Bullet { .. } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           // Draw a circle, with a different color outside.
-          match object.data {
+          let radius_mult = match object.data {
             GameObjectData::Coin { .. } => {
               contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
               contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#aa0"));
+              1.0
             }
             GameObjectData::RareCoin { .. } => {
               contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#04a"));
               contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#026"));
+              1.0
             }
             GameObjectData::Bullet { .. } => {
               contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#f00"));
               contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#a00"));
+              0.5
             }
             _ => unreachable!(),
-          }
+          };
           contexts[MAIN_LAYER].set_line_width(5.0);
           contexts[MAIN_LAYER].begin_path();
           contexts[MAIN_LAYER]
             .arc(
               (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
               (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
-              (TILE_SIZE / 2.0) as f64,
+              (radius_mult * TILE_SIZE / 2.0) as f64,
               0.0,
               2.0 * std::f64::consts::PI,
             )
@@ -762,20 +846,59 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
-        GameObjectData::SavePoint
-        | GameObjectData::Water
-        | GameObjectData::Lava
-        | GameObjectData::Shooter1 { .. }
-        | GameObjectData::Spike
-        | GameObjectData::Platform { .. }
-        | GameObjectData::DeleteMe => {}
+        GameObjectData::HpUp { .. } => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          // Draw a circle, with a different color outside.
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#0f0"));
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#0a0"));
+          contexts[MAIN_LAYER].set_line_width(5.0);
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER]
+            .arc(
+              (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+              (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+              (TILE_SIZE * 0.75) as f64,
+              0.0,
+              2.0 * std::f64::consts::PI,
+            )
+            .unwrap();
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].stroke();
+          // Put text in the middle.
+          contexts[MAIN_LAYER].set_font("24px Arial");
+          contexts[MAIN_LAYER].set_text_align("center");
+          contexts[MAIN_LAYER].set_text_baseline("middle");
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#040"));
+          contexts[MAIN_LAYER]
+            .fill_text(
+              "+HP",
+              (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+              (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+            )
+            .unwrap();
+        }
+        GameObjectData::Stone => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#888"));
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#444"));
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].rect(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.45)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 - 0.45)) as f64,
+            (TILE_SIZE * 0.9) as f64,
+            (TILE_SIZE * 0.9) as f64,
+          );
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].stroke();
+        }
+        _ => {}
       }
     }
 
     // If we're under water, draw a blue rectangle over the screen.
     if self.submerged_in_water {
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.5)"));
-      contexts[MAIN_LAYER].fill_rect(0.0, 0.0, 800.0, 600.0);
+      contexts[MAIN_LAYER].fill_rect(0.0, 0.0, SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
       // Draw our air meter.
       let air_bubbles = if self.suppress_air_meter {
         0

@@ -44,122 +44,127 @@ impl TileRenderer {
       self.current_rect.size.1 as f64,
     );
     // FIXME: It's possible to reuse much of the existing image, by shifting it.
-    let main_layer = self.game_map.get_main_layer();
-    let chunk_count_x = (self.current_rect.size.0 / CHUNK_SIZE_IN_PIXELS).floor() as i32;
-    let chunk_count_y = (self.current_rect.size.1 / CHUNK_SIZE_IN_PIXELS).floor() as i32;
-    self.current_rect = Rect::new(
-      Vec2(
-        chunk_x as f32 * CHUNK_SIZE_IN_PIXELS,
-        chunk_y as f32 * CHUNK_SIZE_IN_PIXELS,
-      ),
-      self.current_rect.size,
-    );
-    let mut tileset_index_to_imag_resource = HashMap::new();
-    //let mut tileset_index_and_id_to_pos = HashMap::new();
-    for (tileset_index, tileset) in self.game_map.map.tilesets().iter().enumerate() {
-      if let Some(image) = &tileset.image {
-        let image_resource = ImageResource::from_path(image.source.to_str().unwrap()).expect(
-          &format!("Failed to find image resource for path: {:?}", image.source),
-        );
-        tileset_index_to_imag_resource.insert(tileset_index, image_resource);
+    for render_layer in [
+      self.game_map.get_background_layer(),
+      self.game_map.get_main_layer(),
+    ] {
+      //let main_layer = self.game_map.get_main_layer();
+      let chunk_count_x = (self.current_rect.size.0 / CHUNK_SIZE_IN_PIXELS).floor() as i32;
+      let chunk_count_y = (self.current_rect.size.1 / CHUNK_SIZE_IN_PIXELS).floor() as i32;
+      self.current_rect = Rect::new(
+        Vec2(
+          chunk_x as f32 * CHUNK_SIZE_IN_PIXELS,
+          chunk_y as f32 * CHUNK_SIZE_IN_PIXELS,
+        ),
+        self.current_rect.size,
+      );
+      let mut tileset_index_to_imag_resource = HashMap::new();
+      //let mut tileset_index_and_id_to_pos = HashMap::new();
+      for (tileset_index, tileset) in self.game_map.map.tilesets().iter().enumerate() {
+        if let Some(image) = &tileset.image {
+          let image_resource = ImageResource::from_path(image.source.to_str().unwrap()).expect(
+            &format!("Failed to find image resource for path: {:?}", image.source),
+          );
+          tileset_index_to_imag_resource.insert(tileset_index, image_resource);
+        }
+        // crate::log(&format!("Tileset {} has {} tiles in {} columns", tileset_index, tileset.tiles().len(), tileset.columns));
+        // for (tile_index, (tile_id, _)) in tileset.tiles().enumerate() {
+        //   crate::log(&format!("Index: {}, ID: {}", tile_index, tile_id));
+        //   let ts_x = tile_index as u32 % tileset.columns;
+        //   let ts_y = tile_index as u32 / tileset.columns;
+        //   tileset_index_and_id_to_pos.insert((tileset_index, tile_id), (ts_x, ts_y));
+        // }
       }
-      // crate::log(&format!("Tileset {} has {} tiles in {} columns", tileset_index, tileset.tiles().len(), tileset.columns));
-      // for (tile_index, (tile_id, _)) in tileset.tiles().enumerate() {
-      //   crate::log(&format!("Index: {}, ID: {}", tile_index, tile_id));
-      //   let ts_x = tile_index as u32 % tileset.columns;
-      //   let ts_y = tile_index as u32 / tileset.columns;
-      //   tileset_index_and_id_to_pos.insert((tileset_index, tile_id), (ts_x, ts_y));
-      // }
-    }
 
-    match main_layer.layer_type() {
-      tiled::LayerType::TileLayer(tiled::TileLayer::Infinite(data)) => {
-        //println!("Infinite tile layer");
-        // We iterate over the chunks in the desired rect.
-        for y in 0..chunk_count_y {
-          for x in 0..chunk_count_x {
-            if let Some(chunk) = data.get_chunk(chunk_x + x, chunk_y + y) {
-              // Draw the chunk.
-              for tile_y in 0..tiled::Chunk::HEIGHT as i32 {
-                for tile_x in 0..tiled::Chunk::WIDTH as i32 {
-                  if let Some(tile) = chunk.get_tile(tile_x, tile_y) {
-                    let base_tile = tile.get_tile().unwrap();
-                    if let Some(user_type) = &base_tile.user_type {
-                      if user_type == "marker" {
-                        continue;
+      match render_layer.layer_type() {
+        tiled::LayerType::TileLayer(tiled::TileLayer::Infinite(data)) => {
+          //println!("Infinite tile layer");
+          // We iterate over the chunks in the desired rect.
+          for y in 0..chunk_count_y {
+            for x in 0..chunk_count_x {
+              if let Some(chunk) = data.get_chunk(chunk_x + x, chunk_y + y) {
+                // Draw the chunk.
+                for tile_y in 0..tiled::Chunk::HEIGHT as i32 {
+                  for tile_x in 0..tiled::Chunk::WIDTH as i32 {
+                    if let Some(tile) = chunk.get_tile(tile_x, tile_y) {
+                      let base_tile = tile.get_tile().unwrap();
+                      if let Some(user_type) = &base_tile.user_type {
+                        if user_type == "marker" {
+                          continue;
+                        }
                       }
-                    }
 
-                    let tileset_index = tile.tileset_index();
-                    //let (ts_x, ts_y) = tileset_index_and_id_to_pos[&(tileset_index, tile.id())];
-                    let ts = tile.get_tileset();
-                    // //let ts_index = tile.tileset_index() as u32;
-                    let ts_index = tile.id() as u32;
-                    let ts_x = ts_index % ts.columns;
-                    let ts_y = ts_index / ts.columns;
-                    let ts_pos = Vec2(ts_x as f32 * TILE_SIZE, ts_y as f32 * TILE_SIZE);
-                    let chunk_pos = Vec2(
-                      x as f32 * CHUNK_SIZE_IN_PIXELS,
-                      y as f32 * CHUNK_SIZE_IN_PIXELS,
-                    );
-                    let tile_pos = Vec2(tile_x as f32 * TILE_SIZE, tile_y as f32 * TILE_SIZE);
-                    let dest_pos = chunk_pos + tile_pos;
-                    // let image_resource = tileset_index_to_imag_resource
-                    //   .entry(tile.tileset_index())
-                    //   .or_insert_with(|| {
-                    //     let image_resource = ImageResource::Tileset(ts.name.clone());
-                    //     images
-                    //       .get(&image_resource)
-                    //       .expect("Missing image resource")
-                    //       .clone()
-                    //   });
-                    let image_resource = tileset_index_to_imag_resource
-                      .get(&tileset_index)
-                      .expect("Missing image resource");
-                    scratch_ctx
-                      .translate(
-                        (dest_pos.0 + TILE_SIZE / 2.0) as f64,
-                        (dest_pos.1 + TILE_SIZE / 2.0) as f64,
-                      )
-                      .unwrap();
-                    if tile.flip_h {
-                      // Mirror around dest_pos.0 + TILE_SIZE / 2
-                      scratch_ctx.scale(-1.0, 1.0).unwrap();
+                      let tileset_index = tile.tileset_index();
+                      //let (ts_x, ts_y) = tileset_index_and_id_to_pos[&(tileset_index, tile.id())];
+                      let ts = tile.get_tileset();
+                      // //let ts_index = tile.tileset_index() as u32;
+                      let ts_index = tile.id() as u32;
+                      let ts_x = ts_index % ts.columns;
+                      let ts_y = ts_index / ts.columns;
+                      let ts_pos = Vec2(ts_x as f32 * TILE_SIZE, ts_y as f32 * TILE_SIZE);
+                      let chunk_pos = Vec2(
+                        x as f32 * CHUNK_SIZE_IN_PIXELS,
+                        y as f32 * CHUNK_SIZE_IN_PIXELS,
+                      );
+                      let tile_pos = Vec2(tile_x as f32 * TILE_SIZE, tile_y as f32 * TILE_SIZE);
+                      let dest_pos = chunk_pos + tile_pos;
+                      // let image_resource = tileset_index_to_imag_resource
+                      //   .entry(tile.tileset_index())
+                      //   .or_insert_with(|| {
+                      //     let image_resource = ImageResource::Tileset(ts.name.clone());
+                      //     images
+                      //       .get(&image_resource)
+                      //       .expect("Missing image resource")
+                      //       .clone()
+                      //   });
+                      let image_resource = tileset_index_to_imag_resource
+                        .get(&tileset_index)
+                        .expect("Missing image resource");
+                      scratch_ctx
+                        .translate(
+                          (dest_pos.0 + TILE_SIZE / 2.0) as f64,
+                          (dest_pos.1 + TILE_SIZE / 2.0) as f64,
+                        )
+                        .unwrap();
+                      if tile.flip_h {
+                        // Mirror around dest_pos.0 + TILE_SIZE / 2
+                        scratch_ctx.scale(-1.0, 1.0).unwrap();
+                      }
+                      if tile.flip_v {
+                        scratch_ctx.scale(1.0, -1.0).unwrap();
+                        //scratch_ctx.translate(0.0, TILE_SIZE as f64).unwrap();
+                      }
+                      // Flip diagonally
+                      if tile.flip_d {
+                        scratch_ctx.rotate(std::f64::consts::FRAC_PI_2).unwrap();
+                        scratch_ctx.scale(1.0, -1.0).unwrap();
+                        // scratch_ctx.rotate(std::f64::consts::FRAC_PI_2);
+                        // scratch_ctx.translate(0.0, -TILE_SIZE as f64);
+                      }
+                      scratch_ctx
+                        .draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                          &images[&image_resource],
+                          ts_pos.0 as f64,
+                          ts_pos.1 as f64,
+                          TILE_SIZE as f64,
+                          TILE_SIZE as f64,
+                          -TILE_SIZE as f64 / 2.0, //dest_pos.0 as f64,
+                          -TILE_SIZE as f64 / 2.0, //dest_pos.1 as f64,
+                          TILE_SIZE as f64,
+                          TILE_SIZE as f64,
+                        )
+                        .unwrap();
+                      // Reset the transform.
+                      scratch_ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
                     }
-                    if tile.flip_v {
-                      scratch_ctx.scale(1.0, -1.0).unwrap();
-                      //scratch_ctx.translate(0.0, TILE_SIZE as f64).unwrap();
-                    }
-                    // Flip diagonally
-                    if tile.flip_d {
-                      scratch_ctx.rotate(std::f64::consts::FRAC_PI_2).unwrap();
-                      scratch_ctx.scale(1.0, -1.0).unwrap();
-                      // scratch_ctx.rotate(std::f64::consts::FRAC_PI_2);
-                      // scratch_ctx.translate(0.0, -TILE_SIZE as f64);
-                    }
-                    scratch_ctx
-                      .draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-                        &images[&image_resource],
-                        ts_pos.0 as f64,
-                        ts_pos.1 as f64,
-                        TILE_SIZE as f64,
-                        TILE_SIZE as f64,
-                        -TILE_SIZE as f64 / 2.0, //dest_pos.0 as f64,
-                        -TILE_SIZE as f64 / 2.0, //dest_pos.1 as f64,
-                        TILE_SIZE as f64,
-                        TILE_SIZE as f64,
-                      )
-                      .unwrap();
-                    // Reset the transform.
-                    scratch_ctx.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0).unwrap();
                   }
                 }
               }
             }
           }
         }
+        _ => panic!("Unexpected layer type"),
       }
-      _ => panic!("Unexpected layer type"),
     }
   }
 

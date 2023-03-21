@@ -6,6 +6,7 @@ use tiled::{Chunk, Loader};
 pub struct GameMap {
   pub map:          tiled::Map,
   main_layer_index: usize,
+  background_layer_index: usize,
 }
 
 impl GameMap {
@@ -31,14 +32,21 @@ impl GameMap {
     // Select the one layer whose name is "Main".
     let main_layer_index =
       map.layers().position(|layer| layer.name == "Main").expect("No layer named 'Main'");
+    let background_layer_index =
+      map.layers().position(|layer| layer.name == "Background").expect("No layer named 'Background'");
 
     Ok(Self {
       map,
       main_layer_index,
+      background_layer_index,
     })
   }
 
   pub fn get_main_layer(&self) -> tiled::Layer {
     self.map.get_layer(self.main_layer_index).unwrap()
+  }
+
+  pub fn get_background_layer(&self) -> tiled::Layer {
+    self.map.get_layer(self.background_layer_index).unwrap()
   }
 }

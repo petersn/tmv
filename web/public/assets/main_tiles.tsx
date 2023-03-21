@@ -32,6 +32,11 @@
   </properties>
  </tile>
  <tile id="5" type="nonsolid"/>
+ <tile id="6" type="nonsolid">
+  <properties>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
  <tile id="8" type="marker">
   <properties>
    <property name="name" value="spawn"/>
@@ -55,6 +60,82 @@
  <tile id="13" type="nonsolid">
   <properties>
    <property name="name" value="platform"/>
+  </properties>
+ </tile>
+ <tile id="14" type="nonsolid">
+  <properties>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="16" type="marker">
+  <properties>
+   <property name="name" value="hp_up"/>
+  </properties>
+ </tile>
+ <tile id="17" type="nonsolid">
+  <properties>
+   <property name="name" value="lava"/>
+  </properties>
+ </tile>
+ <tile id="18" type="nonsolid">
+  <properties>
+   <property name="name" value="water"/>
+  </properties>
+ </tile>
+ <tile id="19" type="nonsolid"/>
+ <tile id="20" type="nonsolid"/>
+ <tile id="22" type="nonsolid">
+  <properties>
+   <property name="count" type="int" value="5"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="23" type="nonsolid">
+  <properties>
+   <property name="count" type="int" value="5"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="25" type="marker">
+  <properties>
+   <property name="name" value="stone"/>
+  </properties>
+ </tile>
+ <tile id="26" type="nonsolid">
+  <properties>
+   <property name="name" value="water"/>
+  </properties>
+ </tile>
+ <tile id="27" type="nonsolid"/>
+ <tile id="28" type="nonsolid"/>
+ <tile id="30" type="nonsolid">
+  <properties>
+   <property name="count" type="int" value="10"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="31" type="nonsolid">
+  <properties>
+   <property name="count" type="int" value="10"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="38" type="nonsolid">
+  <properties>
+   <property name="count" type="int" value="20"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="39" type="nonsolid">
+  <properties>
+   <property name="count" type="int" value="20"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="47">
+  <properties>
+   <property name="count" type="int" value="10"/>
+   <property name="name" value="coin_wall"/>
   </properties>
  </tile>
 </tileset>
