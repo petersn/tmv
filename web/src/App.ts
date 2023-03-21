@@ -6,9 +6,10 @@ let frameTimes: number[] = [];
 let lastTimestamp: number | null = null;
 
 function rafLoop(timestamp: number) {
-  const powerupState = gameState!.get_powerup_state();
+  const powerupState = gameState!.get_char_state();
   const infoLine = gameState!.get_info_line();
   document.getElementById('infoLine')!.innerText = infoLine;
+  document.getElementById('hpIndicator')!.innerText = '❤️'.repeat(Math.max(0, powerupState.hp));
 
   // const frameTime = timestamp - this.lastFrameTimestamp;
   // this.fps = 1000 / frameTime;
@@ -26,7 +27,7 @@ function rafLoop(timestamp: number) {
     if (frameTimes.length > 10) {
       frameTimes.shift();
     }
-    const fps = 1000 / frameTimes.reduce((a, b) => a + b, 0) * frameTimes.length;
+    const fps = 1 / frameTimes.reduce((a, b) => a + b, 0) * frameTimes.length;
     document.getElementById('fpsCounter')!.innerText = `FPS: ${fps.toFixed(2)}`;
   }
   gameState!.draw_frame();

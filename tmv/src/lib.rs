@@ -1,13 +1,16 @@
 use std::{
+  cell::Cell,
   collections::{HashMap, HashSet},
-  rc::Rc, cell::Cell,
+  rc::Rc,
 };
 
-use collision::{CollisionWorld, PhysicsObjectHandle, PhysicsKind};
+use collision::{
+  CollisionWorld, PhysicsKind, PhysicsObjectHandle, BASIC_GROUP, PLAYER_GROUP, WALLS_GROUP,
+};
 use game_maps::GameMap;
 use js_sys::Array;
 use math::{Rect, Vec2};
-use rapier2d::prelude::{ColliderHandle, QueryFilter, Shape};
+use rapier2d::{prelude::{ColliderHandle, InteractionGroups, QueryFilter, Shape, Isometry, Cuboid}, na::Vector2};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tile_rendering::TileRenderer;
@@ -141,29 +144,54 @@ pub enum InputEvent {
   KeyUp { key: String },
 }
 
-#[derive(Serialize)]
-struct PowerUpState {
+pub type EntityId = i32;
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CharState {
+  pub save_point:  Vec2,
+  pub hp:          i32,
   pub double_jump: bool,
-  pub coins:       u32,
-  pub rare_coins:  u32,
+  pub coins:       HashSet<EntityId>,
+  pub rare_coins:  HashSet<EntityId>,
 }
 
-impl Default for PowerUpState {
+impl CharState {
+  pub fn reset_hp(&mut self) {
+    self.hp = 3;
+  }
+}
+
+impl Default for CharState {
   fn default() -> Self {
     Self {
+      save_point:  Vec2::default(),
+      hp:          3,
       double_jump: false,
-      coins:       0,
-      rare_coins:  0,
+      coins:       HashSet::new(),
+      rare_coins:  HashSet::new(),
     }
   }
 }
 
 pub enum GameObjectData {
-  Coin,
-  RareCoin,
+  Coin {
+    entity_id: EntityId,
+  },
+  RareCoin {
+    entity_id: EntityId,
+  },
   Spike,
-  Shooter1 { orientation: Vec2, cooldown: Cell<f32>, shoot_period: f32 },
-  Bullet { velocity: Vec2 },
+  SavePoint,
+  Shooter1 {
+    orientation:  Vec2,
+    cooldown:     Cell<f32>,
+    shoot_period: f32,
+  },
+  Bullet {
+    velocity: Vec2,
+  },
+  Water,
+  Lava,
   DeleteMe,
 }
 
@@ -179,14 +207,17 @@ pub struct GameState {
   keys_held:           HashSet<String>,
   jump_hit:            bool,
   camera_pos:          Vec2,
+  game_map:            Rc<GameMap>,
   collision:           CollisionWorld,
   player_physics:      PhysicsObjectHandle,
   player_vel:          Vec2,
   grounded_last_frame: bool,
   grounded_recently:   f32,
-  powerup_state:       PowerUpState,
+  touching_water:      bool,
+  submerged_in_water:  bool,
+  char_state:          CharState,
+  saved_char_state:    CharState,
   objects:             HashMap<ColliderHandle, GameObject>,
-  hp:                  i32,
   death_animation:     f32,
 }
 
@@ -205,7 +236,6 @@ impl GameState {
       let image = image.dyn_into::<web_sys::HtmlImageElement>()?;
       images.insert(image_resource, image);
     }
-    crate::log("... 0");
 
     let mut canvases = Vec::new();
     let mut contexts = Vec::new();
@@ -225,7 +255,6 @@ impl GameState {
       canvases.push(canvas);
       contexts.push(context2d);
     }
-    crate::log("... 1");
 
     let game_map =
       Rc::new(GameMap::from_resources(&resources, "/assets/map1.tmx").expect("Failed to load map"));
@@ -234,24 +263,25 @@ impl GameState {
 
     //let collision = Collision::from_game_map(&game_map);
     let mut collision = collision::CollisionWorld::new();
-    collision.load_game_map(&game_map, &mut objects);
+
+    let mut char_state = CharState::default();
+
+    collision.load_game_map(&char_state, &game_map, &mut objects);
     let player_physics = collision.new_cuboid(
       PhysicsKind::Sensor,
       collision.spawn_point,
       PLAYER_SIZE,
       0.25,
     );
-
-    crate::log("... 2");
+    char_state.save_point = collision.spawn_point;
 
     let draw_context = DrawContext {
       canvases: canvases.try_into().unwrap(),
       contexts: contexts.try_into().unwrap(),
       images,
       // FIXME: Don't hard-code this.
-      tile_renderer: TileRenderer::new(game_map, Vec2(2048.0, 1536.0)),
+      tile_renderer: TileRenderer::new(game_map.clone(), Vec2(2048.0, 1536.0)),
     };
-    crate::log("... 3");
 
     Ok(Self {
       resources,
@@ -259,26 +289,30 @@ impl GameState {
       keys_held: HashSet::new(),
       jump_hit: false,
       camera_pos: Vec2::default(),
+      game_map,
       collision,
       player_physics,
       player_vel: Vec2::default(),
+      touching_water: false,
+      submerged_in_water: false,
       grounded_last_frame: false,
       grounded_recently: 0.0,
-      powerup_state: PowerUpState::default(),
+      char_state: char_state.clone(),
+      saved_char_state: char_state,
       objects,
-      hp: 3,
       death_animation: 0.0,
     })
   }
 
-  pub fn get_powerup_state(&self) -> JsValue {
-    serde_wasm_bindgen::to_value(&self.powerup_state).unwrap()
+  pub fn get_char_state(&self) -> JsValue {
+    serde_wasm_bindgen::to_value(&self.char_state).unwrap()
   }
 
   pub fn get_info_line(&self) -> String {
     format!(
       "Coins: {:3}   Rare Coins: {:3}",
-      self.powerup_state.coins, self.powerup_state.rare_coins,
+      self.char_state.coins.len(),
+      self.char_state.rare_coins.len(),
     )
   }
 
@@ -289,7 +323,7 @@ impl GameState {
         if key == "ArrowUp" {
           self.jump_hit = true;
         }
-        if key == " " && self.hp <= 0 {
+        if key == " " && self.char_state.hp <= 0 {
           self.respawn();
         }
         self.keys_held.insert(key);
@@ -302,10 +336,20 @@ impl GameState {
   }
 
   pub fn respawn(&mut self) {
-    self.hp = 3;
+    self.char_state = self.saved_char_state.clone();
     self.death_animation = 0.0;
-    self.collision.set_position(&self.player_physics, self.collision.spawn_point);
     self.player_vel = Vec2::default();
+
+    self.objects = HashMap::new();
+    //let collision = Collision::from_game_map(&game_map);
+    self.collision = collision::CollisionWorld::new();
+    self.collision.load_game_map(&self.char_state, &self.game_map, &mut self.objects);
+    self.player_physics = self.collision.new_cuboid(
+      PhysicsKind::Sensor,
+      self.char_state.save_point,
+      PLAYER_SIZE,
+      0.25,
+    );
   }
 
   fn create_bullet(&mut self, location: Vec2, velocity: Vec2) {
@@ -314,9 +358,13 @@ impl GameState {
       location,
       0.5,
       false,
+      Some(InteractionGroups::new(
+        BASIC_GROUP,
+        WALLS_GROUP | PLAYER_GROUP,
+      )),
     );
     // Set the interaction group.
-    // InteractionGroups::new(BASIC_GROUP, WALLS_GROUP | PLAYER_GROUP)
+
     // Set the velocity.
     self.collision.set_velocity(&physics_handle, velocity);
     self.objects.insert(
@@ -356,6 +404,8 @@ impl GameState {
 
     let filter = QueryFilter::default();
 
+    self.touching_water = false;
+    self.submerged_in_water = false;
     // Get the shape and pos of the player collider.
     if let Some((shape, pos)) = self.collision.get_shape_and_position(&self.player_physics) {
       self.collision.query_pipeline.intersections_with_shape(
@@ -367,20 +417,34 @@ impl GameState {
         |handle| {
           if let Some(object) = self.objects.get_mut(&handle) {
             match object.data {
-              GameObjectData::Coin => {
+              GameObjectData::Coin { entity_id } => {
                 object.data = GameObjectData::DeleteMe;
-                self.powerup_state.coins += 1;
+                self.char_state.coins.insert(entity_id);
               }
-              GameObjectData::RareCoin => {
+              GameObjectData::RareCoin { entity_id } => {
                 object.data = GameObjectData::DeleteMe;
-                self.powerup_state.rare_coins += 1;
+                self.char_state.rare_coins.insert(entity_id);
               }
-              GameObjectData::Spike => self.hp -= 100,
+              GameObjectData::Spike => self.char_state.hp -= 100,
               GameObjectData::Bullet { .. } => {
-                if self.hp > 0 {
-                  self.hp -= 1;
+                if self.char_state.hp > 0 {
+                  self.char_state.hp -= 1;
                   object.data = GameObjectData::DeleteMe;
                 }
+              }
+              GameObjectData::Water => {
+                self.touching_water = true;
+              }
+              GameObjectData::Lava { .. } => {
+                // FIXME: Properly handle lava.
+                self.char_state.hp = 0;
+              }
+              GameObjectData::SavePoint => {
+                let save_point = &self.objects[&handle].physics_handle;
+                self.char_state.save_point =
+                  self.collision.get_position(save_point).unwrap() + Vec2(0.0, -1.0);
+                self.char_state.reset_hp();
+                self.saved_char_state = self.char_state.clone();
               }
               GameObjectData::Shooter1 { .. } | GameObjectData::DeleteMe => {}
             }
@@ -388,29 +452,59 @@ impl GameState {
           true // Return `false` instead if we want to stop searching for other colliders that contain this point.
         },
       );
+      // If we're touching water, check if we're submerged.
+      let head_pos = Isometry::new(pos.translation.vector - Vector2::new(0.0, 1.0), 0.0);
+      let head_shape = Cuboid::new(Vector2::new(PLAYER_SIZE.0 / 2.0, 0.5));
+      self.collision.query_pipeline.intersections_with_shape(
+        &self.collision.rigid_body_set,
+        &self.collision.collider_set,
+        &head_pos,
+        &head_shape,
+        filter,
+        |handle| {
+          if let Some(object) = self.objects.get_mut(&handle) {
+            match object.data {
+              GameObjectData::Water => {
+                self.submerged_in_water = true;
+                false
+              }
+              _ => true,
+            }
+          } else {
+            true
+          }
+        },
+      );
     }
+
     // Remove deleted objects.
     self.objects.retain(|_, v| match v.data {
       GameObjectData::DeleteMe => {
         self.collision.remove_object(v.physics_handle.clone());
         false
-      },
+      }
       _ => true,
     });
 
     let mut calls = Vec::new();
     for object in self.objects.values_mut() {
       match &object.data {
-        GameObjectData::Shooter1 { orientation, cooldown, shoot_period } => {
+        GameObjectData::Shooter1 {
+          orientation,
+          cooldown,
+          shoot_period,
+        } => {
           cooldown.set(cooldown.get() - dt);
           if cooldown.get() <= 0.0 {
             cooldown.set(*shoot_period);
             let velocity = 10.0 * *orientation;
             let physics_handle = object.physics_handle.clone();
-            calls.push(move |this: &mut Self| this.create_bullet(
-              this.collision.get_position(&physics_handle).unwrap(),
-              velocity,
-            ));
+            calls.push(move |this: &mut Self| {
+              this.create_bullet(
+                this.collision.get_position(&physics_handle).unwrap(),
+                velocity,
+              )
+            });
           }
         }
         GameObjectData::Bullet { velocity } => {
@@ -428,13 +522,13 @@ impl GameState {
     }
 
     // Don't do anything else if we're dead.
-    if self.hp <= 0 {
+    if self.char_state.hp <= 0 {
       self.death_animation += dt;
       return Ok(());
     }
 
-    //self.hp = 3;
-    //self.powerup_state = PowerUpState::default();
+    //self.char_state.hp = 3;
+    //self.char_state = CharState::default();
     //self.collision.set_position(&self.player_physics, self.collision.spawn_point);
 
     // self.player_pos = new_pos;
@@ -566,15 +660,17 @@ impl GameState {
     // Draw all of the objects.
     for (handle, object) in &self.objects {
       match object.data {
-        GameObjectData::Coin | GameObjectData::RareCoin | GameObjectData::Bullet { .. } => {
+        GameObjectData::Coin { .. }
+        | GameObjectData::RareCoin { .. }
+        | GameObjectData::Bullet { .. } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           // Draw a circle, with a different color outside.
           match object.data {
-            GameObjectData::Coin => {
+            GameObjectData::Coin { .. } => {
               contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
               contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#aa0"));
             }
-            GameObjectData::RareCoin => {
+            GameObjectData::RareCoin { .. } => {
               contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#04a"));
               contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#026"));
             }
@@ -596,8 +692,19 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
-        GameObjectData::Shooter1 { .. } | GameObjectData::Spike | GameObjectData::DeleteMe => {}
+        GameObjectData::SavePoint
+        | GameObjectData::Water
+        | GameObjectData::Lava
+        | GameObjectData::Shooter1 { .. }
+        | GameObjectData::Spike
+        | GameObjectData::DeleteMe => {}
       }
+    }
+
+    // If we're under water, draw a blue rectangle over the screen.
+    if self.submerged_in_water {
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.5)"));
+      contexts[MAIN_LAYER].fill_rect(0.0, 0.0, 800.0, 600.0);
     }
 
     // // Draw all of the game objects.

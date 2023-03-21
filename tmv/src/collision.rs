@@ -1,4 +1,8 @@
-use std::{collections::HashMap, rc::Rc, cell::Cell};
+use std::{
+  cell::Cell,
+  collections::{HashMap, HashSet},
+  rc::Rc,
+};
 
 use rapier2d::{
   control::{EffectiveCharacterMovement, KinematicCharacterController},
@@ -8,7 +12,7 @@ use rapier2d::{
 use tiled::Chunk;
 
 use crate::{
-  game_maps::GameMap, math::Vec2, tile_rendering::TILE_SIZE, GameObject, GameObjectData,
+  game_maps::GameMap, math::Vec2, tile_rendering::TILE_SIZE, CharState, GameObject, GameObjectData,
 };
 
 pub enum PhysicsKind {
@@ -24,12 +28,14 @@ pub struct PhysicsObjectHandle {
   pub collider:   ColliderHandle,
 }
 
-const BASIC_GROUP: Group = Group::GROUP_1;
-const WALLS_GROUP: Group = Group::GROUP_2;
-const PLAYER_GROUP: Group = Group::GROUP_3;
+pub const BASIC_GROUP: Group = Group::GROUP_1;
+pub const WALLS_GROUP: Group = Group::GROUP_2;
+pub const PLAYER_GROUP: Group = Group::GROUP_3;
+pub const WATER_GROUP: Group = Group::GROUP_4;
+pub const LAVA_GROUP: Group = Group::GROUP_5;
 
-const BASIC_INT_GROUPS: InteractionGroups = InteractionGroups::new(BASIC_GROUP, Group::ALL);
-const WALLS_INT_GROUPS: InteractionGroups = InteractionGroups::new(WALLS_GROUP, Group::ALL);
+pub const BASIC_INT_GROUPS: InteractionGroups = InteractionGroups::new(BASIC_GROUP, Group::ALL);
+pub const WALLS_INT_GROUPS: InteractionGroups = InteractionGroups::new(WALLS_GROUP, Group::ALL);
 
 // We make a struct to hold all the physics objects.
 pub struct CollisionWorld {
@@ -81,9 +87,12 @@ impl CollisionWorld {
 
   pub fn load_game_map(
     &mut self,
+    char_state: &CharState,
     game_map: &GameMap,
     objects: &mut HashMap<ColliderHandle, GameObject>,
   ) {
+    let mut all_solid_cells = HashSet::new();
+
     // The main layer includes some objects, like spikes.
     let main_layer = game_map.map.layers().find(|l| l.name == "Main").unwrap();
     match main_layer.layer_type() {
@@ -97,6 +106,18 @@ impl CollisionWorld {
                   chunk_pos.1 * Chunk::HEIGHT as i32 + y,
                 );
                 let base_tile = tile.get_tile().unwrap();
+                let user_type: &str = match &base_tile.user_type {
+                  Some(s) => s,
+                  _ => "",
+                };
+                match user_type {
+                  "nonsolid" | "marker" => {}
+                  "" => {
+                    all_solid_cells.insert(tile_pos);
+                  }
+                  _ => panic!("Unknown user_type: {}", user_type),
+                }
+
                 let name: &str = match base_tile.properties.get("name") {
                   Some(tiled::PropertyValue::StringValue(s)) => s,
                   _ => continue,
@@ -106,6 +127,7 @@ impl CollisionWorld {
                   Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
                   0.48,
                   true,
+                  None,
                 );
                 let mut orientation = Vec2(1.0, 0.0);
                 if tile.flip_d {
@@ -117,14 +139,35 @@ impl CollisionWorld {
                 if tile.flip_h {
                   orientation.0 *= -1.0;
                 }
+                let entity_id = 1_000_000 * tile_pos.1 + tile_pos.0;
                 match name {
+                  "coin" | "rare_coin" => {
+                    // If the player has already picked up this coin, skip it
+                    if char_state.coins.contains(&entity_id)
+                      | char_state.rare_coins.contains(&entity_id)
+                    {
+                      continue;
+                    }
+                  }
+                  _ => {}
+                }
+                match name {
+                  "water" => {
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Water,
+                      },
+                    );
+                  }
                   // Coin
                   "coin" => {
                     objects.insert(
                       handle.collider,
                       GameObject {
                         physics_handle: handle,
-                        data:           GameObjectData::Coin,
+                        data:           GameObjectData::Coin { entity_id },
                       },
                     );
                   }
@@ -134,7 +177,7 @@ impl CollisionWorld {
                       handle.collider,
                       GameObject {
                         physics_handle: handle,
-                        data:           GameObjectData::RareCoin,
+                        data:           GameObjectData::RareCoin { entity_id },
                       },
                     );
                   }
@@ -154,9 +197,23 @@ impl CollisionWorld {
                         physics_handle: handle,
                         data:           GameObjectData::Shooter1 {
                           orientation,
-                          cooldown: Cell::new(2.0),
-                          shoot_period: 0.4,
+                          cooldown: Cell::new(1.0),
+                          shoot_period: 1.0,
                         },
+                      },
+                    );
+                  }
+                  "save_left" => {
+                    // Because only the left tile in the save point gets an entity, we shift it over half a tile.
+                    self.set_position(
+                      &handle,
+                      Vec2(tile_pos.0 as f32 + 1.0, tile_pos.1 as f32 + 0.5),
+                    );
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::SavePoint,
                       },
                     );
                   }
@@ -171,6 +228,7 @@ impl CollisionWorld {
       _ => panic!("Unsupported layer type: {:?}", main_layer.layer_type()),
     }
 
+    // Add extra collision objects from the collision layer.
     let collision_layer = game_map.map.layers().find(|l| l.name == "Collision").unwrap();
     match collision_layer.layer_type() {
       tiled::LayerType::ObjectLayer(object_layer) => {
@@ -188,17 +246,72 @@ impl CollisionWorld {
             }
             _ => panic!("Unsupported object shape: {:?}", object.shape),
           }
-          //println!("Object: {:?}", object);
-          // let pos = object.properties;
-          // let size = object.size();
-          // let pos = Vec2(pos.x as f32, pos.y as f32);
-          // let size = Vec2(size.width as f32, size.height as f32);
-          // let rect = Rect::new(pos, size);
-          // self.add_rect(rect, PhysicsKind::Static);
         }
       }
       _ => panic!("Unsupported layer type"),
     }
+
+    // We now generate walls from our solid cells.
+    let min_x = all_solid_cells.iter().map(|c| c.0).min().unwrap();
+    let max_x = all_solid_cells.iter().map(|c| c.0).max().unwrap();
+    let min_y = all_solid_cells.iter().map(|c| c.1).min().unwrap();
+    let max_y = all_solid_cells.iter().map(|c| c.1).max().unwrap();
+    let mut walls: Vec<((i32, i32), (i32, i32))> = Vec::new();
+    // Horizontal scans.
+    for y in min_y..=max_y + 1 {
+      let mut row_start: Option<i32> = None;
+      for x in min_x..=max_x + 1 {
+        let is_boundary = all_solid_cells.contains(&(x, y)) ^ all_solid_cells.contains(&(x, y - 1));
+        match (is_boundary, row_start) {
+          (true, None) => row_start = Some(x),
+          (true, Some(_)) => {}
+          (false, Some(start)) => {
+            walls.push(((start, y), (x, y)));
+            row_start = None;
+          }
+          (false, None) => {}
+        }
+      }
+    }
+    // Vertical scans.
+    for x in min_x..=max_x + 1 {
+      let mut row_start: Option<i32> = None;
+      for y in min_y..=max_y + 1 {
+        let is_boundary = all_solid_cells.contains(&(x, y)) ^ all_solid_cells.contains(&(x - 1, y));
+        match (is_boundary, row_start) {
+          (true, None) => row_start = Some(y),
+          (true, Some(_)) => {}
+          (false, Some(start)) => {
+            walls.push(((x, start), (x, y)));
+            row_start = None;
+          }
+          (false, None) => {}
+        }
+      }
+    }
+    crate::log(&format!("Found {} walls", walls.len()));
+    // We now insert the walls into the physics world.
+    let rigid_body = self.rigid_body_set.insert(
+      RigidBodyBuilder::fixed()
+        .position(Isometry::new(Vector2::new(0.0, 0.0), nalgebra::zero()))
+        .build(),
+    );
+    let mut indices: Vec<[u32; 2]> = Vec::new();
+    let mut idx = 0;
+    for _ in 0..walls.len() {
+      indices.push([idx, idx + 1]);
+      idx += 2;
+    }
+    let mut vertices = Vec::new();
+    for ((x1, y1), (x2, y2)) in walls {
+      vertices.push(Point::new(x1 as f32, y1 as f32));
+      vertices.push(Point::new(x2 as f32, y2 as f32));
+    }
+    self.collider_set.insert_with_parent(
+      ColliderBuilder::polyline(vertices, Some(indices)).collision_groups(WALLS_INT_GROUPS),
+      rigid_body,
+      &mut self.rigid_body_set,
+    );
   }
 
   pub fn new_static_walls(
@@ -236,6 +349,7 @@ impl CollisionWorld {
     position: Vec2,
     radius: f32,
     is_sensor: bool,
+    int_groups: Option<InteractionGroups>,
   ) -> PhysicsObjectHandle {
     let rigid_body = match kind {
       PhysicsKind::Static => RigidBodyBuilder::fixed(),
@@ -246,11 +360,12 @@ impl CollisionWorld {
     .translation(vector![position.0, position.1])
     .build();
     let rigid_body = self.rigid_body_set.insert(rigid_body);
-    let collider = self.collider_set.insert_with_parent(
-      ColliderBuilder::ball(radius).collision_groups(BASIC_INT_GROUPS).sensor(is_sensor),
-      rigid_body,
-      &mut self.rigid_body_set,
-    );
+    let mut builder = ColliderBuilder::ball(radius).sensor(is_sensor);
+    if let Some(int_groups) = int_groups {
+      builder = builder.collision_groups(int_groups);
+    }
+    let collider =
+      self.collider_set.insert_with_parent(builder, rigid_body, &mut self.rigid_body_set);
     PhysicsObjectHandle {
       rigid_body: Some(rigid_body),
       collider,
@@ -275,7 +390,8 @@ impl CollisionWorld {
     .build();
     let rigid_body = self.rigid_body_set.insert(rigid_body);
     let collider = self.collider_set.insert_with_parent(
-      ColliderBuilder::round_cuboid(size.0 / 2.0 - rounding, size.1 / 2.0 - rounding, rounding).collision_groups(BASIC_INT_GROUPS),
+      ColliderBuilder::round_cuboid(size.0 / 2.0 - rounding, size.1 / 2.0 - rounding, rounding)
+        .collision_groups(BASIC_INT_GROUPS),
       rigid_body,
       &mut self.rigid_body_set,
     );
