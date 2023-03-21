@@ -308,19 +308,24 @@ impl GameState {
     self.player_vel = Vec2::default();
   }
 
-  fn create_bullet(&mut self, location: Vec2, velocity: Vec2) -> (ColliderHandle, GameObject) {
-    let physics_handle = self.collision.new_sensor_circle(
-      collision::PhysicsKind::Sensor,
+  fn create_bullet(&mut self, location: Vec2, velocity: Vec2) {
+    let physics_handle = self.collision.new_circle(
+      collision::PhysicsKind::Dynamic,
       location,
       0.5,
+      false,
     );
-    (
+    // Set the interaction group.
+    // InteractionGroups::new(BASIC_GROUP, WALLS_GROUP | PLAYER_GROUP)
+    // Set the velocity.
+    self.collision.set_velocity(&physics_handle, velocity);
+    self.objects.insert(
       physics_handle.collider,
       GameObject {
         physics_handle,
         data: GameObjectData::Bullet { velocity },
       },
-    )
+    );
   }
 
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
@@ -349,32 +354,6 @@ impl GameState {
     //   crate::log(&format!("Received trigger event: {:?}", contact_force_event));
     // }
 
-    let mut new_objects = Vec::new();
-    for (handle, object) in self.objects {
-      match &object.data {
-        GameObjectData::Shooter1 { orientation: _, cooldown, shoot_period } => {
-          cooldown.set(cooldown.get() - dt);
-          if cooldown.get() <= 0.0 {
-            cooldown.set(*shoot_period);
-            new_objects.push(self.create_bullet(
-              self.collision.get_position(&object.physics_handle).unwrap(),
-              Vec2(0.0, 1.0),
-            ));
-          }
-        }
-        _ => {}
-      }
-    }
-    for (handle, object) in new_objects {
-      self.objects.insert(handle, object);
-    }
-
-    // Don't do anything else if we're dead.
-    if self.hp <= 0 {
-      self.death_animation += dt;
-      return Ok(());
-    }
-
     let filter = QueryFilter::default();
 
     // Get the shape and pos of the player collider.
@@ -398,8 +377,10 @@ impl GameState {
               }
               GameObjectData::Spike => self.hp -= 100,
               GameObjectData::Bullet { .. } => {
-                self.hp -= 1;
-                object.data = GameObjectData::DeleteMe;
+                if self.hp > 0 {
+                  self.hp -= 1;
+                  object.data = GameObjectData::DeleteMe;
+                }
               }
               GameObjectData::Shooter1 { .. } | GameObjectData::DeleteMe => {}
             }
@@ -410,9 +391,47 @@ impl GameState {
     }
     // Remove deleted objects.
     self.objects.retain(|_, v| match v.data {
-      GameObjectData::DeleteMe => false,
+      GameObjectData::DeleteMe => {
+        self.collision.remove_object(v.physics_handle.clone());
+        false
+      },
       _ => true,
     });
+
+    let mut calls = Vec::new();
+    for object in self.objects.values_mut() {
+      match &object.data {
+        GameObjectData::Shooter1 { orientation, cooldown, shoot_period } => {
+          cooldown.set(cooldown.get() - dt);
+          if cooldown.get() <= 0.0 {
+            cooldown.set(*shoot_period);
+            let velocity = 10.0 * *orientation;
+            let physics_handle = object.physics_handle.clone();
+            calls.push(move |this: &mut Self| this.create_bullet(
+              this.collision.get_position(&physics_handle).unwrap(),
+              velocity,
+            ));
+          }
+        }
+        GameObjectData::Bullet { velocity } => {
+          // If the object's velocity has changed, delete it.
+          let vel = self.collision.get_velocity(&object.physics_handle).unwrap();
+          if (vel - *velocity).length() > 0.01 {
+            object.data = GameObjectData::DeleteMe;
+          }
+        }
+        _ => {}
+      }
+    }
+    for f in calls {
+      f(self);
+    }
+
+    // Don't do anything else if we're dead.
+    if self.hp <= 0 {
+      self.death_animation += dt;
+      return Ok(());
+    }
 
     //self.hp = 3;
     //self.powerup_state = PowerUpState::default();

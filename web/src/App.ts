@@ -19,8 +19,9 @@ function rafLoop(timestamp: number) {
     // this.conn.syncedGameWorld!.draw_frame();
   //} finally {
   if (lastTimestamp !== null) {
-    const dt = timestamp - lastTimestamp;
-    gameState!.step(1e-3 * dt);
+    // Don't step by more than a tenth of a second at a time.
+    const dt = Math.min(0.1, 1e-3 * (timestamp - lastTimestamp));
+    gameState!.step(dt);
     frameTimes.push(dt);
     if (frameTimes.length > 10) {
       frameTimes.shift();

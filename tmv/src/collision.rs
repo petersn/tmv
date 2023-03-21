@@ -24,6 +24,13 @@ pub struct PhysicsObjectHandle {
   pub collider:   ColliderHandle,
 }
 
+const BASIC_GROUP: Group = Group::GROUP_1;
+const WALLS_GROUP: Group = Group::GROUP_2;
+const PLAYER_GROUP: Group = Group::GROUP_3;
+
+const BASIC_INT_GROUPS: InteractionGroups = InteractionGroups::new(BASIC_GROUP, Group::ALL);
+const WALLS_INT_GROUPS: InteractionGroups = InteractionGroups::new(WALLS_GROUP, Group::ALL);
+
 // We make a struct to hold all the physics objects.
 pub struct CollisionWorld {
   pub rigid_body_set:         RigidBodySet,
@@ -39,17 +46,17 @@ pub struct CollisionWorld {
   pub multibody_joint_set:    MultibodyJointSet,
   pub ccd_solver:             CCDSolver,
   pub physics_hooks:          (),
-  pub event_handler:          (), //ChannelEventCollector,
+  pub event_handler:          (), // ChannelEventCollector,
   pub char_controller:        KinematicCharacterController,
   pub spawn_point:            Vec2,
-  //pub collision_recv:         crossbeam::channel::Receiver<CollisionEvent>,
-  //pub contact_force_recv:     crossbeam::channel::Receiver<ContactForceEvent>,
+  // pub collision_recv:         crossbeam::channel::Receiver<CollisionEvent>,
+  // pub contact_force_recv:     crossbeam::channel::Receiver<ContactForceEvent>,
 }
 
 impl CollisionWorld {
   pub fn new() -> Self {
-    //let (collision_send, collision_recv) = crossbeam::channel::unbounded();
-    //let (contact_force_send, contact_force_recv) = crossbeam::channel::unbounded();
+    // let (collision_send, collision_recv) = crossbeam::channel::unbounded();
+    // let (contact_force_send, contact_force_recv) = crossbeam::channel::unbounded();
     Self {
       rigid_body_set:         RigidBodySet::new(),
       collider_set:           ColliderSet::new(),
@@ -67,8 +74,8 @@ impl CollisionWorld {
       event_handler:          (), //ChannelEventCollector::new(collision_send, contact_force_send),
       char_controller:        KinematicCharacterController::default(),
       spawn_point:            Vec2::default(),
-      //collision_recv,
-      //contact_force_recv,
+      // collision_recv,
+      // contact_force_recv,
     }
   }
 
@@ -94,20 +101,21 @@ impl CollisionWorld {
                   Some(tiled::PropertyValue::StringValue(s)) => s,
                   _ => continue,
                 };
-                let handle = self.new_sensor_circle(
+                let handle = self.new_circle(
                   PhysicsKind::Sensor,
                   Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
                   0.48,
+                  true,
                 );
                 let mut orientation = Vec2(1.0, 0.0);
-                if tile.flip_h {
-                  orientation.0 *= -1.0;
+                if tile.flip_d {
+                  (orientation.0, orientation.1) = (orientation.1, orientation.0);
                 }
                 if tile.flip_v {
                   orientation.1 *= -1.0;
                 }
-                if tile.flip_d {
-                  (orientation.0, orientation.1) = (orientation.1, orientation.0);
+                if tile.flip_h {
+                  orientation.0 *= -1.0;
                 }
                 match name {
                   // Coin
@@ -147,7 +155,7 @@ impl CollisionWorld {
                         data:           GameObjectData::Shooter1 {
                           orientation,
                           cooldown: Cell::new(2.0),
-                          shoot_period: 2.0,
+                          shoot_period: 0.4,
                         },
                       },
                     );
@@ -181,7 +189,6 @@ impl CollisionWorld {
             _ => panic!("Unsupported object shape: {:?}", object.shape),
           }
           //println!("Object: {:?}", object);
-          crate::log(&format!("Object: {:?}", object));
           // let pos = object.properties;
           // let size = object.size();
           // let pos = Vec2(pos.x as f32, pos.y as f32);
@@ -213,7 +220,7 @@ impl CollisionWorld {
     }
     let vertices: Vec<_> = segments.iter().map(|v| Point::new(v.0, v.1)).collect();
     let collider = self.collider_set.insert_with_parent(
-      ColliderBuilder::polyline(vertices, Some(indices)),
+      ColliderBuilder::polyline(vertices, Some(indices)).collision_groups(WALLS_INT_GROUPS),
       rigid_body,
       &mut self.rigid_body_set,
     );
@@ -223,11 +230,12 @@ impl CollisionWorld {
     }
   }
 
-  pub fn new_sensor_circle(
+  pub fn new_circle(
     &mut self,
     kind: PhysicsKind,
     position: Vec2,
     radius: f32,
+    is_sensor: bool,
   ) -> PhysicsObjectHandle {
     let rigid_body = match kind {
       PhysicsKind::Static => RigidBodyBuilder::fixed(),
@@ -239,7 +247,7 @@ impl CollisionWorld {
     .build();
     let rigid_body = self.rigid_body_set.insert(rigid_body);
     let collider = self.collider_set.insert_with_parent(
-      ColliderBuilder::ball(radius).sensor(true),
+      ColliderBuilder::ball(radius).collision_groups(BASIC_INT_GROUPS).sensor(is_sensor),
       rigid_body,
       &mut self.rigid_body_set,
     );
@@ -267,7 +275,7 @@ impl CollisionWorld {
     .build();
     let rigid_body = self.rigid_body_set.insert(rigid_body);
     let collider = self.collider_set.insert_with_parent(
-      ColliderBuilder::round_cuboid(size.0 / 2.0 - rounding, size.1 / 2.0 - rounding, rounding),
+      ColliderBuilder::round_cuboid(size.0 / 2.0 - rounding, size.1 / 2.0 - rounding, rounding).collision_groups(BASIC_INT_GROUPS),
       rigid_body,
       &mut self.rigid_body_set,
     );
@@ -308,6 +316,17 @@ impl CollisionWorld {
     rigid_body.set_linvel(Vector2::zeros(), true);
   }
 
+  pub fn get_velocity(&self, handle: &PhysicsObjectHandle) -> Option<Vec2> {
+    let rigid_body = self.rigid_body_set.get(handle.rigid_body?)?;
+    let velocity = rigid_body.linvel();
+    Some(Vec2(velocity.x, velocity.y))
+  }
+
+  pub fn set_velocity(&mut self, handle: &PhysicsObjectHandle, velocity: Vec2) {
+    let rigid_body = self.rigid_body_set.get_mut(handle.rigid_body.unwrap()).unwrap();
+    rigid_body.set_linvel(Vector2::new(velocity.0, velocity.1), true);
+  }
+
   pub fn get_shape_and_position(
     &self,
     handle: &PhysicsObjectHandle,
@@ -340,6 +359,8 @@ impl CollisionWorld {
       QueryFilter::default()
         // Make sure the the character we are trying to move isn’t considered an obstacle.
         .exclude_sensors()
+        .groups(InteractionGroups::new(PLAYER_GROUP, WALLS_GROUP))
+        //.groups(InteractionGroups::new(Group::ALL, Group::GROUP_10))
         .exclude_rigid_body(handle.rigid_body.unwrap()),
       |_| {}, // We don’t care about events in this example.
     );
