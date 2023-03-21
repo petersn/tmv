@@ -33,6 +33,7 @@ pub const WALLS_GROUP: Group = Group::GROUP_2;
 pub const PLAYER_GROUP: Group = Group::GROUP_3;
 pub const WATER_GROUP: Group = Group::GROUP_4;
 pub const LAVA_GROUP: Group = Group::GROUP_5;
+pub const PLATFORMS_GROUP: Group = Group::GROUP_6;
 
 pub const BASIC_INT_GROUPS: InteractionGroups = InteractionGroups::new(BASIC_GROUP, Group::ALL);
 pub const WALLS_INT_GROUPS: InteractionGroups = InteractionGroups::new(WALLS_GROUP, Group::ALL);
@@ -217,6 +218,27 @@ impl CollisionWorld {
                       },
                     );
                   }
+                  "platform" => {
+                    self.remove_object(handle);
+                    let handle = self.new_static_walls(
+                      (tile_pos.0 as f32, tile_pos.1 as f32),
+                      &[(0.0, 0.3), (1.0, 0.3)],
+                      InteractionGroups {
+                        memberships: PLATFORMS_GROUP,
+                        filter:      Group::ALL,
+                      },
+                    );
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Platform {
+                          currently_solid: true,
+                          y:               tile_pos.1 as f32 + 0.3,
+                        },
+                      },
+                    );
+                  }
                   "spawn" => self.spawn_point = Vec2(tile_pos.0 as f32, tile_pos.1 as f32),
                   _ => panic!("Unsupported tile name: {}", name),
                 }
@@ -242,7 +264,11 @@ impl CollisionWorld {
               if let tiled::ObjectShape::Polygon { .. } = object.shape {
                 points.push(points[0]);
               }
-              self.new_static_walls((object.x / TILE_SIZE, object.y / TILE_SIZE), &points[..]);
+              self.new_static_walls(
+                (object.x / TILE_SIZE, object.y / TILE_SIZE),
+                &points[..],
+                WALLS_INT_GROUPS,
+              );
             }
             _ => panic!("Unsupported object shape: {:?}", object.shape),
           }
@@ -318,6 +344,7 @@ impl CollisionWorld {
     &mut self,
     xy: (f32, f32),
     segments: &[(f32, f32)],
+    int_groups: InteractionGroups,
   ) -> PhysicsObjectHandle {
     println!("New static walls: {:?}", segments);
     let rigid_body = self.rigid_body_set.insert(
@@ -333,7 +360,7 @@ impl CollisionWorld {
     }
     let vertices: Vec<_> = segments.iter().map(|v| Point::new(v.0, v.1)).collect();
     let collider = self.collider_set.insert_with_parent(
-      ColliderBuilder::polyline(vertices, Some(indices)).collision_groups(WALLS_INT_GROUPS),
+      ColliderBuilder::polyline(vertices, Some(indices)).collision_groups(int_groups),
       rigid_body,
       &mut self.rigid_body_set,
     );
@@ -457,8 +484,13 @@ impl CollisionWorld {
     dt: f32,
     handle: &PhysicsObjectHandle,
     shift: Vec2,
+    drop_through_platforms: bool,
   ) -> EffectiveCharacterMovement {
     let shape = self.collider_set.get(handle.collider).unwrap().shape();
+    let mut hit_groups = WALLS_GROUP;
+    if shift.1 > 0.0 && !drop_through_platforms {
+      hit_groups |= PLATFORMS_GROUP;
+    }
     let corrected_movement = self.char_controller.move_shape(
       dt, // The timestep length (can be set to SimulationSettings::dt).
       &self.rigid_body_set,
@@ -475,7 +507,7 @@ impl CollisionWorld {
       QueryFilter::default()
         // Make sure the the character we are trying to move isn’t considered an obstacle.
         .exclude_sensors()
-        .groups(InteractionGroups::new(PLAYER_GROUP, WALLS_GROUP))
+        .groups(InteractionGroups::new(PLAYER_GROUP, hit_groups))
         //.groups(InteractionGroups::new(Group::ALL, Group::GROUP_10))
         .exclude_rigid_body(handle.rigid_body.unwrap()),
       |_| {}, // We don’t care about events in this example.

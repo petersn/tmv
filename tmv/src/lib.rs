@@ -10,7 +10,10 @@ use collision::{
 use game_maps::GameMap;
 use js_sys::Array;
 use math::{Rect, Vec2};
-use rapier2d::{prelude::{ColliderHandle, InteractionGroups, QueryFilter, Shape, Isometry, Cuboid}, na::Vector2};
+use rapier2d::{
+  na::Vector2,
+  prelude::{ColliderHandle, Cuboid, InteractionGroups, Isometry, QueryFilter, Shape},
+};
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use tile_rendering::TileRenderer;
@@ -71,7 +74,7 @@ impl ImageResource {
   }
 
   pub fn from_path(path: &str) -> Option<Self> {
-    use strum::IntoEnumIterator;
+    //use strum::IntoEnumIterator;
     for image_resource in Self::iter() {
       if image_resource.get_path() == path {
         return Some(image_resource);
@@ -193,6 +196,11 @@ pub enum GameObjectData {
   },
   Water,
   Lava,
+  // The y value is the top of the platform.
+  Platform {
+    currently_solid: bool,
+    y:               f32,
+  },
   DeleteMe,
 }
 
@@ -407,6 +415,8 @@ impl GameState {
     //   crate::log(&format!("Received trigger event: {:?}", contact_force_event));
     // }
 
+    let player_y = self.collision.get_position(&self.player_physics).unwrap().1;
+
     let filter = QueryFilter::default();
 
     self.touching_water = false;
@@ -451,6 +461,19 @@ impl GameState {
                 self.char_state.reset_hp();
                 self.saved_char_state = self.char_state.clone();
               }
+              // Let the player drop through platforms they're colliding with.
+              // FIXME: Is there a better idiom here, maybe using @?
+              GameObjectData::Platform { .. } => match &mut object.data {
+                GameObjectData::Platform {
+                  currently_solid, y
+                } => {
+                  // Collision depth is how deeply the player is embedded into the platform.
+                  let collision_depth = player_y + PLAYER_SIZE.1 / 2.0 - *y;
+                  crate::log(&format!("Collision depth: {}", collision_depth));
+                  *currently_solid = collision_depth < 0.01;
+                }
+                _ => unreachable!(),
+              },
               GameObjectData::Shooter1 { .. } | GameObjectData::DeleteMe => {}
             }
           }
@@ -504,9 +527,10 @@ impl GameState {
       _ => true,
     });
 
+    // Process object updates.
     let mut calls = Vec::new();
     for object in self.objects.values_mut() {
-      match &object.data {
+      match &mut object.data {
         GameObjectData::Shooter1 {
           orientation,
           cooldown,
@@ -530,6 +554,18 @@ impl GameState {
           let vel = self.collision.get_velocity(&object.physics_handle).unwrap();
           if (vel - *velocity).length() > 0.01 {
             object.data = GameObjectData::DeleteMe;
+          }
+        }
+        GameObjectData::Platform { currently_solid, y } => {
+          // We make the platform no longer collide.
+          let collider = &mut self.collision.collider_set[object.physics_handle.collider];
+          collider.set_enabled(*currently_solid);
+          let player_sink = player_y + PLAYER_SIZE.1 / 2.0 - *y;
+          if player_sink > 0.5 {
+            *currently_solid = false;
+          }
+          if player_sink < 0.0 {
+            *currently_solid = true;
           }
         }
         _ => {}
@@ -599,6 +635,8 @@ impl GameState {
       dt,
       &self.player_physics,
       dt * self.player_vel,
+      // drop through platforms
+      self.keys_held.contains("ArrowDown"),
     );
     // For some reason effective_motion.grounded seems to always be false,
     // so we instead consider ourselves grounded if we didn't move the full requested amount in y.
@@ -628,7 +666,7 @@ impl GameState {
     if self.jump_hit && self.grounded_recently > 0.0 {
       let abs_horizontal = self.player_vel.0.abs();
       let jump_multiplier = match self.touching_water {
-        true => 0.75,
+        true => 0.5,
         false => 1.0,
       };
       self.player_vel.1 = (-22.0 - 0.1 * abs_horizontal) * jump_multiplier;
@@ -688,7 +726,7 @@ impl GameState {
     );
 
     // Draw all of the objects.
-    for (handle, object) in &self.objects {
+    for (_handle, object) in &self.objects {
       match object.data {
         GameObjectData::Coin { .. }
         | GameObjectData::RareCoin { .. }
@@ -712,13 +750,15 @@ impl GameState {
           }
           contexts[MAIN_LAYER].set_line_width(5.0);
           contexts[MAIN_LAYER].begin_path();
-          contexts[MAIN_LAYER].arc(
-            (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
-            (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
-            (TILE_SIZE / 2.0) as f64,
-            0.0,
-            2.0 * std::f64::consts::PI,
-          );
+          contexts[MAIN_LAYER]
+            .arc(
+              (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+              (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+              (TILE_SIZE / 2.0) as f64,
+              0.0,
+              2.0 * std::f64::consts::PI,
+            )
+            .unwrap();
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
@@ -727,6 +767,7 @@ impl GameState {
         | GameObjectData::Lava
         | GameObjectData::Shooter1 { .. }
         | GameObjectData::Spike
+        | GameObjectData::Platform { .. }
         | GameObjectData::DeleteMe => {}
       }
     }
@@ -736,7 +777,11 @@ impl GameState {
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.5)"));
       contexts[MAIN_LAYER].fill_rect(0.0, 0.0, 800.0, 600.0);
       // Draw our air meter.
-      let air_bubbles = if self.suppress_air_meter { 0 } else { self.air_remaining.round() as i32 };
+      let air_bubbles = if self.suppress_air_meter {
+        0
+      } else {
+        self.air_remaining.round() as i32
+      };
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.75)"));
       contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("rgba(128, 128, 255, 0.75)"));
       contexts[MAIN_LAYER].set_line_width(2.0);
@@ -747,13 +792,15 @@ impl GameState {
       for i in 0..air_bubbles {
         // Draw circles.
         contexts[MAIN_LAYER].begin_path();
-        contexts[MAIN_LAYER].arc(
-          player_center.0 - 87.5 + 25.0 * i as f64,
-          player_center.1 - 80.0,
-          10.0,
-          0.0,
-          2.0 * std::f64::consts::PI,
-        ).unwrap();
+        contexts[MAIN_LAYER]
+          .arc(
+            player_center.0 - 87.5 + 25.0 * i as f64,
+            player_center.1 - 80.0,
+            10.0,
+            0.0,
+            2.0 * std::f64::consts::PI,
+          )
+          .unwrap();
         contexts[MAIN_LAYER].fill();
         contexts[MAIN_LAYER].stroke();
       }

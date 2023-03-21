@@ -47,4 +47,14 @@
    <property name="name" value="water"/>
   </properties>
  </tile>
+ <tile id="12" type="nonsolid">
+  <properties>
+   <property name="name" value="platform"/>
+  </properties>
+ </tile>
+ <tile id="13" type="nonsolid">
+  <properties>
+   <property name="name" value="platform"/>
+  </properties>
+ </tile>
 </tileset>
