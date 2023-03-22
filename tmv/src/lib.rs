@@ -40,6 +40,7 @@ const SCRATCH_LAYER: usize = 3;
 const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
 const JUMP_GRACE_PERIOD: f32 = 0.1;
 const UNDERWATER_TIME: f32 = 8.0;
+const HIGH_UNDERWATER_TIME: f32 = 16.0;
 const SCREEN_WIDTH: f32 = 1200.0;
 const SCREEN_HEIGHT: f32 = 800.0;
 //const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
@@ -568,6 +569,7 @@ impl GameState {
               GameObjectData::PowerUp { .. } => {
                 match &object.data {
                   GameObjectData::PowerUp { power_up } => {
+                    crate::log(&format!("Got power up: {:?}", power_up));
                     self.char_state.power_ups.insert(power_up.clone());
                   }
                   _ => unreachable!(),
@@ -624,30 +626,33 @@ impl GameState {
           true // Return `false` instead if we want to stop searching for other colliders that contain this point.
         },
       );
-      // If we're touching water, check if we're submerged.
-      let head_pos = Isometry::new(pos.translation.vector - Vector2::new(0.0, 1.0), 0.0);
-      let head_shape = Cuboid::new(Vector2::new(PLAYER_SIZE.0 / 2.0, 0.5));
-      self.collision.query_pipeline.intersections_with_shape(
-        &self.collision.rigid_body_set,
-        &self.collision.collider_set,
-        &head_pos,
-        &head_shape,
-        filter,
-        |handle| {
-          if let Some(object) = self.objects.get_mut(&handle) {
-            match object.data {
-              GameObjectData::Water => {
-                self.submerged_in_water = true;
-                false
+      if self.touching_water {
+        // If we're touching water, check if we're submerged.
+        let head_pos = Isometry::new(pos.translation.vector - Vector2::new(0.0, 1.0), 0.0);
+        let head_shape = Cuboid::new(Vector2::new(PLAYER_SIZE.0 / 2.0, 0.5));
+        self.collision.query_pipeline.intersections_with_shape(
+          &self.collision.rigid_body_set,
+          &self.collision.collider_set,
+          &head_pos,
+          &head_shape,
+          filter,
+          |handle| {
+            if let Some(object) = self.objects.get_mut(&handle) {
+              match object.data {
+                GameObjectData::Water => {
+                  self.submerged_in_water = true;
+                  false
+                }
+                _ => true,
               }
-              _ => true,
+            } else {
+              true
             }
-          } else {
-            true
-          }
-        },
-      );
+          },
+        );
+      }
     }
+    let water_movement = self.touching_water && !self.char_state.power_ups.contains("water");
 
     // Process damage blink.
     self.damage_blink.set(self.damage_blink.get() - dt);
@@ -665,7 +670,10 @@ impl GameState {
         self.suppress_air_meter = true;
       }
     } else {
-      self.air_remaining = UNDERWATER_TIME;
+      self.air_remaining = match self.char_state.power_ups.contains("water") {
+        false => UNDERWATER_TIME,
+        true => HIGH_UNDERWATER_TIME,
+      };
       self.suppress_air_meter = false;
     }
 
@@ -821,7 +829,7 @@ impl GameState {
     let horizontal_dv = match self.grounded_last_frame {
       true => 150.0,
       false => 25.0,
-    } * match self.touching_water {
+    } * match water_movement {
       true => 0.2,
       false => 1.0,
     };
@@ -840,7 +848,7 @@ impl GameState {
       self.player_vel.1 *= 0.01f32.powf(dt);
     }
 
-    let (mut max_horiz_speed, gravity_accel, terminal_velocity) = match self.touching_water {
+    let (mut max_horiz_speed, gravity_accel, terminal_velocity) = match water_movement {
       true => (10.0, 20.0, 15.0),
       false => (15.0, 60.0, 30.0),
     };
@@ -894,7 +902,7 @@ impl GameState {
       && (self.recently_blocked_to_left > 0.0 || self.recently_blocked_to_right > 0.0);
     if self.jump_hit && (self.grounded_recently > 0.0 || wall_jump_allowed) {
       let abs_horizontal = self.player_vel.0.abs();
-      let jump_multiplier = match self.touching_water {
+      let jump_multiplier = match water_movement {
         true => 0.5,
         false => 1.0,
       };
@@ -958,6 +966,9 @@ impl GameState {
           self.char_state.int1_completed = true;
           self.interaction1_delete_stone();
         }
+      }
+      2 => {
+
       }
       _ => panic!("Unknown interaction: {}", interaction),
     }
@@ -1290,10 +1301,10 @@ impl GameState {
 
     // If we're under water, draw a blue rectangle over the screen.
     if self.submerged_in_water {
-      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.5)"));
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.4)"));
       contexts[MAIN_LAYER].fill_rect(0.0, 0.0, SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
       // Draw our air meter.
-      let air_bubbles = if self.suppress_air_meter {
+      let air_bubbles = if self.suppress_air_meter || self.char_state.hp.get() <= 0 {
         0
       } else {
         self.air_remaining.round() as i32
@@ -1310,8 +1321,8 @@ impl GameState {
         contexts[MAIN_LAYER].begin_path();
         contexts[MAIN_LAYER]
           .arc(
-            player_center.0 - 87.5 + 25.0 * i as f64,
-            player_center.1 - 80.0,
+            player_center.0 - 87.5 + 25.0 * (i % 8) as f64,
+            player_center.1 - 80.0 + 25.0 * (i / 8) as f64,
             10.0,
             0.0,
             2.0 * std::f64::consts::PI,
@@ -1326,6 +1337,7 @@ impl GameState {
     if let Some(interaction_number) = self.offered_interaction {
       let text = match interaction_number {
         1 => "Press E to shoot laser",
+        2 => "Press E to activate machine",
         _ => "Unknown interaction!",
       };
       contexts[MAIN_LAYER].set_font("32px Arial");

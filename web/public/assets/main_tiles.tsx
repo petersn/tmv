@@ -180,4 +180,10 @@
  </tile>
  <tile id="51" class="nonsolid"/>
  <tile id="52" class="nonsolid"/>
+ <tile id="57" class="marker">
+  <properties>
+   <property name="name" value="powerup"/>
+   <property name="powerup" value="lava"/>
+  </properties>
+ </tile>
 </tileset>
