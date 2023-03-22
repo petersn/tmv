@@ -172,6 +172,12 @@
    <property name="name" value="coin_wall"/>
   </properties>
  </tile>
+ <tile id="49" class="marker">
+  <properties>
+   <property name="name" value="powerup"/>
+   <property name="powerup" value="water"/>
+  </properties>
+ </tile>
  <tile id="51" class="nonsolid"/>
  <tile id="52" class="nonsolid"/>
 </tileset>

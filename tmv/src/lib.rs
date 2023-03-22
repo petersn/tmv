@@ -158,12 +158,13 @@ pub type EntityId = i32;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct CharState {
-  pub save_point: Vec2,
-  pub hp:         Cell<i32>,
-  pub power_ups:  HashSet<String>,
-  pub coins:      HashSet<EntityId>,
-  pub rare_coins: HashSet<EntityId>,
-  pub hp_ups:     HashSet<EntityId>,
+  pub save_point:     Vec2,
+  pub hp:             Cell<i32>,
+  pub power_ups:      HashSet<String>,
+  pub coins:          HashSet<EntityId>,
+  pub rare_coins:     HashSet<EntityId>,
+  pub hp_ups:         HashSet<EntityId>,
+  pub int1_completed: bool,
 }
 
 impl CharState {
@@ -181,6 +182,7 @@ impl Default for CharState {
       coins:      HashSet::new(),
       rare_coins: HashSet::new(),
       hp_ups:     HashSet::new(),
+      int1_completed: false,
     }
   }
 }
@@ -295,6 +297,9 @@ pub struct GameState {
   objects:                   HashMap<ColliderHandle, GameObject>,
   death_animation:           f32,
   facing_right:              bool,
+
+  // Data for specific interactions.
+  int1_laser_time:           f32,
 }
 
 #[wasm_bindgen]
@@ -391,6 +396,7 @@ impl GameState {
       objects,
       death_animation: 0.0,
       facing_right: true,
+      int1_laser_time: 0.0,
     })
   }
 
@@ -449,6 +455,10 @@ impl GameState {
       false,
       BASIC_INT_GROUPS,
     );
+    // FIXME: This should maybe also run on the initial load.
+    if self.char_state.int1_completed {
+      self.interaction1_delete_stone();
+    }
   }
 
   fn create_bullet(&mut self, location: Vec2, velocity: Vec2) {
@@ -497,6 +507,8 @@ impl GameState {
   }
 
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
+    self.int1_laser_time = (self.int1_laser_time - dt).max(0.0);
+
     //self.player_vel.1 += 1.0 * dt;
     // let (new_player_pos, collision_happened) = self.collision.try_move_rect(Rect {
     //   pos: self.player_pos,
@@ -922,6 +934,11 @@ impl GameState {
       }
     }
 
+    // If the laser is firing, and we're high enough up to get hit, take damage.
+    if self.int1_laser_time > 0.0 && player_y < 1070.0 / TILE_SIZE {
+      take_damage!(self, 999999);
+    }
+
     self.jump_hit = false;
     self.dash_hit = false;
     self.interact_hit = false;
@@ -936,9 +953,31 @@ impl GameState {
   pub fn apply_interaction(&mut self, interaction: i32) {
     match interaction {
       1 => {
-        // FIXME: Implement this.
+        if self.int1_laser_time <= 0.0 {
+          self.int1_laser_time = 0.6;
+          self.char_state.int1_completed = true;
+          self.interaction1_delete_stone();
+        }
       }
       _ => panic!("Unknown interaction: {}", interaction),
+    }
+  }
+
+  pub fn interaction1_delete_stone(&mut self) {
+    for object in self.objects.values_mut() {
+      match &mut object.data {
+        GameObjectData::Stone => {
+          let min_x = 17.0;
+          let max_x = 27.0;
+          let min_y = 28.0;
+          let max_y = 38.0;
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          if pos.0 >= min_x && pos.0 <= max_x && pos.1 >= min_y && pos.1 <= max_y {
+            object.data = GameObjectData::DeleteMe;
+          }
+        }
+        _ => {}
+      }
     }
   }
 
@@ -1110,6 +1149,7 @@ impl GameState {
               match &power_up[..] {
                 "wall_jump" => "WJ",
                 "dash" => "D",
+                "water" => "W",
                 _ => panic!("Unknown power up: {}", power_up),
               },
               (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
@@ -1174,6 +1214,7 @@ impl GameState {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#888"));
           contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#444"));
+          contexts[MAIN_LAYER].set_line_width(3.0);
           contexts[MAIN_LAYER].begin_path();
           contexts[MAIN_LAYER].rect(
             (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.45)) as f64,
@@ -1211,6 +1252,39 @@ impl GameState {
           contexts[MAIN_LAYER].stroke();
         }
         _ => {}
+      }
+    }
+
+    if self.int1_laser_time > 0.0 {
+      let laser_origin = (1200.0, 1024.0);
+      // Draw the laser.
+      contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#ff0"));
+      contexts[MAIN_LAYER].set_line_width(20.0 * self.int1_laser_time as f64);
+      contexts[MAIN_LAYER].begin_path();
+      contexts[MAIN_LAYER].move_to(
+        (laser_origin.0 - self.camera_pos.0 * TILE_SIZE) as f64,
+        (laser_origin.1 - self.camera_pos.1 * TILE_SIZE) as f64,
+      );
+      contexts[MAIN_LAYER].line_to(
+        (laser_origin.0 - self.camera_pos.0 * TILE_SIZE - 800.0) as f64,
+        (laser_origin.1 - self.camera_pos.1 * TILE_SIZE) as f64,
+      );
+      contexts[MAIN_LAYER].stroke();
+      contexts[MAIN_LAYER].set_line_width(10.0 * self.int1_laser_time as f64);
+      for _ in 0..12 {
+        let angle = (rand::random::<f32>() - 0.5) * 1.0 + std::f32::consts::PI;
+        let distance = (40.0 + rand::random::<f32>() * 120.0) * self.int1_laser_time;
+        let endpoint = (
+          (laser_origin.0 - self.camera_pos.0 * TILE_SIZE + angle.cos() * distance) as f64,
+          (laser_origin.1 - self.camera_pos.1 * TILE_SIZE + angle.sin() * distance) as f64,
+        );
+        contexts[MAIN_LAYER].begin_path();
+        contexts[MAIN_LAYER].move_to(
+          (laser_origin.0 - self.camera_pos.0 * TILE_SIZE) as f64,
+          (laser_origin.1 - self.camera_pos.1 * TILE_SIZE) as f64,
+        );
+        contexts[MAIN_LAYER].line_to(endpoint.0, endpoint.1);
+        contexts[MAIN_LAYER].stroke();
       }
     }
 
