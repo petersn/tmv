@@ -239,7 +239,7 @@ impl CollisionWorld {
                     );
                   }
                   "spike" => {
-                    let handle = make_circle(0.45);
+                    let handle = make_circle(0.2);
                     objects.insert(
                       handle.collider,
                       GameObject {
@@ -378,6 +378,26 @@ impl CollisionWorld {
                           angle: orientation.1.atan2(orientation.0),
                           hit_point: laser_origin,
                         },
+                      },
+                    );
+                  }
+                  "vanish_block" => {
+                    let handle = self.new_cuboid(
+                      PhysicsKind::Static,
+                      Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
+                      Vec2(1.0, 1.0),
+                      0.05,
+                      false,
+                      WALLS_INT_GROUPS,
+                    );
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::VanishBlock {
+                          vanish_timer: 1.0,
+                          is_solid:     true,
+                        }
                       },
                     );
                   }

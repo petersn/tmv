@@ -41,7 +41,7 @@ const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
 const JUMP_GRACE_PERIOD: f32 = 0.1;
 const WALL_JUMP_GRACE: f32 = 0.3;
 const UNDERWATER_TIME: f32 = 8.0;
-const HIGH_UNDERWATER_TIME: f32 = 16.0;
+const HIGH_UNDERWATER_TIME: f32 = 24.0;
 const SCREEN_WIDTH: f32 = 1200.0;
 const SCREEN_HEIGHT: f32 = 800.0;
 const MAP_REVELATION_DISCRETIZATION: i32 = 8;
@@ -161,7 +161,7 @@ pub enum InputEvent {
 
 pub type EntityId = i32;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CharState {
   pub save_point:     Vec2,
   pub hp:             Cell<i32>,
@@ -251,6 +251,10 @@ pub enum GameObjectData {
     time_left: f32,
   },
   Stone,
+  VanishBlock {
+    vanish_timer: f32,
+    is_solid:     bool,
+  },
   DestroyedDoor,
   Interaction {
     interaction_number: i32,
@@ -271,6 +275,12 @@ macro_rules! take_damage {
       $self.queued_damage_text.set(Some($damage));
     }
   }};
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct LocalStorageSaveData {
+  pub char_state: CharState,
+  pub revealed_map: HashSet<(i32, i32)>,
 }
 
 #[wasm_bindgen]
@@ -421,10 +431,27 @@ impl GameState {
 
   pub fn get_info_line(&self) -> String {
     format!(
-      "Coins: {:3}   Rare Coins: {:3}",
+      "Coins: {:3}", //   Rare Coins: {:3}",
       self.char_state.coins.len(),
-      self.char_state.rare_coins.len(),
+      //self.char_state.rare_coins.len(),
     )
+  }
+
+  pub fn get_save_data(&self) -> String {
+    // JSON serialize self.saved_char_state and self.revealed_map.
+    let save_data = LocalStorageSaveData {
+      char_state: self.saved_char_state.clone(),
+      revealed_map: self.revealed_map.clone(),
+    };
+    serde_json::to_string(&save_data).unwrap()
+  }
+
+  pub fn apply_save_data(&mut self, save_data: &str) -> Result<(), JsValue> {
+    let save_data: LocalStorageSaveData = serde_json::from_str(save_data).to_js_error()?;
+    self.saved_char_state = save_data.char_state;
+    self.revealed_map = save_data.revealed_map;
+    self.respawn();
+    Ok(())
   }
 
   pub fn apply_input_event(&mut self, event: &str) -> Result<(), JsValue> {
@@ -527,25 +554,26 @@ impl GameState {
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
     if self.showing_map {
       if self.keys_held.contains("ArrowUp") {
-        self.map_shift_pos.1 -= 1.0 / self.map_zoom * dt;
+        self.map_shift_pos.1 -= 1.5 / self.map_zoom * dt;
       }
       if self.keys_held.contains("ArrowDown") {
-        self.map_shift_pos.1 += 1.0 / self.map_zoom * dt;
+        self.map_shift_pos.1 += 1.5 / self.map_zoom * dt;
       }
       if self.keys_held.contains("ArrowLeft") {
-        self.map_shift_pos.0 -= 1.0 / self.map_zoom * dt;
+        self.map_shift_pos.0 -= 1.5 / self.map_zoom * dt;
       }
       if self.keys_held.contains("ArrowRight") {
-        self.map_shift_pos.0 += 1.0 / self.map_zoom * dt;
+        self.map_shift_pos.0 += 1.5 / self.map_zoom * dt;
       }
       if self.keys_held.contains("z") {
-        self.map_zoom *= 10.0f32.powf(dt);
+        self.map_zoom *= 20.0f32.powf(dt);
       }
       if self.keys_held.contains("x") {
-        self.map_zoom /= 10.0f32.powf(dt)
+        self.map_zoom /= 20.0f32.powf(dt);
       }
-      self.map_shift_pos.0 = self.map_shift_pos.0.clamp(0.0, 1.0);
-      self.map_shift_pos.1 = self.map_shift_pos.1.clamp(0.0, 1.0);
+      self.map_zoom = self.map_zoom.clamp(1.0, 10.0);
+      self.map_shift_pos.0 = self.map_shift_pos.0.clamp(0.5 / self.map_zoom, 1.0 - 0.5 / self.map_zoom);
+      self.map_shift_pos.1 = self.map_shift_pos.1.clamp(0.5 / self.map_zoom, 1.0 - 0.5 / self.map_zoom);
       return Ok(());
     }
 
@@ -670,6 +698,7 @@ impl GameState {
                 self.offered_interaction = Some(interaction_number);
               }
               GameObjectData::DestroyedDoor
+              | GameObjectData::VanishBlock { .. }
               | GameObjectData::Stone
               | GameObjectData::CoinWall { .. }
               | GameObjectData::Shooter1 { .. }
@@ -840,6 +869,27 @@ impl GameState {
                 },
               );
             }));
+          }
+        }
+        GameObjectData::VanishBlock { vanish_timer, is_solid } => {
+          // Check the distance to the player.
+          let block_pos = self.collision.get_position(&object.physics_handle).unwrap();
+          let distance = (player_pos - block_pos).length();
+          if distance < 2.0 || (*is_solid && *vanish_timer < 1.0) {
+            *vanish_timer = (*vanish_timer - dt * 1.0).max(0.0);
+          } else {
+            *vanish_timer = (*vanish_timer + dt / 3.0).min(1.0);
+          }
+          if *vanish_timer <= 0.0 {
+            // Disable collision on our collider.
+            let collider = &mut self.collision.collider_set[object.physics_handle.collider];
+            collider.set_enabled(false);
+            *is_solid = false;
+          }
+          if *vanish_timer >= 1.0 {
+            let collider = &mut self.collision.collider_set[object.physics_handle.collider];
+            collider.set_enabled(true);
+            *is_solid = true;
           }
         }
         GameObjectData::FloatyText { time_left, .. } => {
@@ -1381,6 +1431,37 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
+        GameObjectData::VanishBlock { vanish_timer, is_solid } => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          // If we're solid draw a block turning red.
+          let mut size = 0.9;
+          if *is_solid {
+            contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str(&format!(
+              "rgb({},{},{})",
+              255 - (119.0 * vanish_timer.clamp(0.0, 1.0)) as i32,
+              136,
+              136,
+            )));
+            contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#444"));
+          } else {
+            // Otherwise, show a block fading back in.
+            contexts[MAIN_LAYER].set_global_alpha(0.5 * vanish_timer.clamp(0.0, 1.0) as f64);
+            size = 0.3 + 0.6 * vanish_timer.clamp(0.0, 1.0);
+            contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#888"));
+            contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#444"));
+          }
+          contexts[MAIN_LAYER].set_line_width(3.0);
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].rect(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - size / 2.0)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 - size / 2.0)) as f64,
+            (TILE_SIZE * size) as f64,
+            (TILE_SIZE * size) as f64,
+          );
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].stroke();
+          contexts[MAIN_LAYER].set_global_alpha(1.0);
+        }
         GameObjectData::Thwump { orientation, .. }
         | GameObjectData::MovingPlatform { orientation } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
@@ -1455,8 +1536,8 @@ impl GameState {
       } else {
         self.air_remaining.round() as i32
       };
-      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.75)"));
-      contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("rgba(128, 128, 255, 0.75)"));
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("rgba(0, 0, 255, 0.5)"));
+      contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("rgba(128, 128, 255, 0.5)"));
       contexts[MAIN_LAYER].set_line_width(2.0);
       let player_center = (
         (TILE_SIZE * (player_pos.0 - self.camera_pos.0)) as f64,
@@ -1468,7 +1549,7 @@ impl GameState {
         contexts[MAIN_LAYER]
           .arc(
             player_center.0 - 87.5 + 25.0 * (i % 8) as f64,
-            player_center.1 - 80.0 + 25.0 * (i / 8) as f64,
+            player_center.1 - 110.0 + 25.0 * (i / 8) as f64,
             10.0,
             0.0,
             2.0 * std::f64::consts::PI,

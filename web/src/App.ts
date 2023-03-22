@@ -94,6 +94,16 @@ async function main() {
     
     console.log('All resources loaded');
     gameState = new GameState(resources);
+    const pmvSaveData = localStorage.getItem('pmvSaveData');
+    if (pmvSaveData !== null) {
+      //gameState.apply_save_data(pmvSaveData);
+    }
+    // FIXME: There's no need to save so frequently, but also it doesn't matter?
+    setInterval(() => {
+      const saveData = gameState!.get_save_data();
+      localStorage.setItem('pmvSaveData', saveData);
+    }, 500);
+
     window.requestAnimationFrame(rafLoop);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);

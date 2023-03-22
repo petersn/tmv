@@ -113,6 +113,11 @@
  </tile>
  <tile id="27" class="nonsolid"/>
  <tile id="28" class="nonsolid"/>
+ <tile id="29" class="marker">
+  <properties>
+   <property name="name" value="vanish_block"/>
+  </properties>
+ </tile>
  <tile id="30" class="nonsolid">
   <properties>
    <property name="count" type="int" value="10"/>
