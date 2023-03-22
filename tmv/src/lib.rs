@@ -387,7 +387,7 @@ impl GameState {
       camera_pos: Vec2::default(),
       game_map,
       showing_map: false,
-      map_shift_pos: Vec2::default(),
+      map_shift_pos: Vec2(0.5, 0.5),
       map_zoom: 1.0,
       revealed_map: HashSet::new(),
       collision,
@@ -527,23 +527,25 @@ impl GameState {
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
     if self.showing_map {
       if self.keys_held.contains("ArrowUp") {
-        self.map_shift_pos.1 -= 100.0 * self.map_zoom * dt;
+        self.map_shift_pos.1 -= 1.0 / self.map_zoom * dt;
       }
       if self.keys_held.contains("ArrowDown") {
-        self.map_shift_pos.1 += 100.0 * self.map_zoom * dt;
+        self.map_shift_pos.1 += 1.0 / self.map_zoom * dt;
       }
       if self.keys_held.contains("ArrowLeft") {
-        self.map_shift_pos.0 -= 100.0 * self.map_zoom * dt;
+        self.map_shift_pos.0 -= 1.0 / self.map_zoom * dt;
       }
       if self.keys_held.contains("ArrowRight") {
-        self.map_shift_pos.0 += 100.0 * self.map_zoom * dt;
+        self.map_shift_pos.0 += 1.0 / self.map_zoom * dt;
       }
       if self.keys_held.contains("z") {
-        self.map_zoom *= 1.0 + 0.5 * dt;
+        self.map_zoom *= 10.0f32.powf(dt);
       }
       if self.keys_held.contains("x") {
-        self.map_zoom /= 1.0 + 0.5 * dt;
+        self.map_zoom /= 10.0f32.powf(dt)
       }
+      self.map_shift_pos.0 = self.map_shift_pos.0.clamp(0.0, 1.0);
+      self.map_shift_pos.1 = self.map_shift_pos.1.clamp(0.0, 1.0);
       return Ok(());
     }
 
@@ -1057,52 +1059,75 @@ impl GameState {
     } = &mut self.draw_context;
 
     if self.showing_map {
+      let image = &images[&ImageResource::MapSmall];
       // Fill the main layer with red.
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#334"));
       contexts[MAIN_LAYER].fill_rect(0.0, 0.0, SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
+
+      // There are three coordinate spaces:
+      // *) world space coordinates (ranging from like -300 to +300)
+      // *) uv coordinates in the map image (ranging from 0 to 1)
+      // *) screen coordinates (ranging from 0 to 1000ish)
+
+      let map_size = (image.width() as f32, image.height() as f32);
+      let map_bounds = ((-176, -112), (240, 208));
+
+      let world_to_map_uv = |(world_x, world_y): (f32, f32)| {
+        let uv_x = (world_x - map_bounds.0 .0 as f32) / (map_bounds.1 .0 - map_bounds.0 .0) as f32;
+        let uv_y = (world_y - map_bounds.0 .1 as f32) / (map_bounds.1 .1 - map_bounds.0 .1) as f32;
+        (uv_x, uv_y)
+      };
+      let map_uv_to_screen = |(uv_x, uv_y): (f32, f32)| {
+        // Compute offsets from the center of the screen.
+        let dx = self.map_zoom * (uv_x - self.map_shift_pos.0) * SCREEN_WIDTH as f32;
+        let dy = self.map_zoom * (uv_y - self.map_shift_pos.1) * SCREEN_HEIGHT as f32;
+        let screen_x = SCREEN_WIDTH as f32 / 2.0 + dx;
+        let screen_y = SCREEN_HEIGHT as f32 / 2.0 + dy;
+        (screen_x as f64, screen_y as f64)
+      };
+      let world_delta_to_screen_factor = (
+        self.map_zoom * SCREEN_WIDTH / (map_bounds.1 .0 - map_bounds.0 .0) as f32,
+        self.map_zoom * SCREEN_HEIGHT / (map_bounds.1 .1 - map_bounds.0 .1) as f32,
+      );
+
       // Copy over from the map image.
-      let image = &images[&ImageResource::MapSmall];
+      let screen_top_left = map_uv_to_screen((0.0, 0.0));
+      let screen_bottom_right = map_uv_to_screen((1.0, 1.0));
+      // We set the context to use nearest neighbor scaling.
+      contexts[MAIN_LAYER].set_image_smoothing_enabled(false);
       contexts[MAIN_LAYER]
         .draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
           image,
-          self.map_shift_pos.0 as f64,
-          self.map_shift_pos.1 as f64,
-          (self.map_zoom * image.width() as f32) as f64,
-          (self.map_zoom * image.height() as f32) as f64,
           0.0,
           0.0,
-          SCREEN_WIDTH as f64,
-          SCREEN_HEIGHT as f64,
+          map_size.0 as f64,
+          map_size.1 as f64,
+          screen_top_left.0,
+          screen_top_left.1,
+          screen_bottom_right.0 - screen_top_left.0,
+          screen_bottom_right.1 - screen_top_left.1,
         )
         .unwrap();
-      let map_bounds = ((-176, -112), (240, 208));
-      let world_xy_to_map_xy = |world_x: f32, world_y: f32| {
-        let map_x = (world_x - map_bounds.0 .0 as f32) / (map_bounds.1 .0 - map_bounds.0 .0) as f32
-          * SCREEN_WIDTH;
-        let map_y = (world_y - map_bounds.0 .1 as f32) / (map_bounds.1 .1 - map_bounds.0 .1) as f32
-          * SCREEN_HEIGHT;
-        (map_x as f64, map_y as f64)
-      };
-      let map_to_screen_x = SCREEN_WIDTH as f32 / (self.map_zoom * image.width() as f32);
-      let map_to_screen_y = SCREEN_HEIGHT as f32 / (self.map_zoom * image.height() as f32);
+      contexts[MAIN_LAYER].set_image_smoothing_enabled(true);
       // Black out everything that's not revealed.
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#000"));
+      contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#444"));
+      contexts[MAIN_LAYER].set_line_width(1.0);
       let mut chunk_y = map_bounds.0 .1;
       while chunk_y < map_bounds.1 .1 {
         let mut chunk_x = map_bounds.0 .0;
         while chunk_x < map_bounds.1 .0 {
           if !self.revealed_map.contains(&(chunk_x, chunk_y)) {
-            let (map_x, map_y) = world_xy_to_map_xy(chunk_x as f32, chunk_y as f32);
-            let (next_map_x, next_map_y) = world_xy_to_map_xy(
-              (chunk_x + MAP_REVELATION_DISCRETIZATION) as f32,
-              (chunk_y + MAP_REVELATION_DISCRETIZATION) as f32,
+            let screen_pos = map_uv_to_screen(world_to_map_uv((chunk_x as f32, chunk_y as f32)));
+            contexts[MAIN_LAYER].begin_path();
+            contexts[MAIN_LAYER].rect(
+              screen_pos.0,
+              screen_pos.1,
+              world_delta_to_screen_factor.0 as f64 * MAP_REVELATION_DISCRETIZATION as f64,
+              world_delta_to_screen_factor.1 as f64 * MAP_REVELATION_DISCRETIZATION as f64,
             );
-            contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#000"));
-            contexts[MAIN_LAYER].fill_rect(
-              map_x - (map_to_screen_x * self.map_shift_pos.0) as f64 - 1.0,
-              map_y - (map_to_screen_y * self.map_shift_pos.1) as f64 - 1.0,
-              self.map_zoom as f64 * (next_map_x - map_x) + 2.0,
-              self.map_zoom as f64 * (next_map_y - map_y) + 2.0,
-            );
+            contexts[MAIN_LAYER].fill();
+            contexts[MAIN_LAYER].stroke();
           }
           chunk_x += MAP_REVELATION_DISCRETIZATION;
         }
@@ -1110,14 +1135,10 @@ impl GameState {
       }
       // Draw where we are.
       let player_pos = self.collision.get_position(&self.player_physics).unwrap_or(Vec2(0.0, 0.0));
-      let (map_x, map_y) = world_xy_to_map_xy(player_pos.0, player_pos.1);
+      let screen_pos = map_uv_to_screen(world_to_map_uv((player_pos.0, player_pos.1)));
+      let dot_size = (4.0 * self.map_zoom).max(6.0) as f64;
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
-      contexts[MAIN_LAYER].fill_rect(
-        map_x - (map_to_screen_x * self.map_shift_pos.0) as f64 - 2.0,
-        map_y - (map_to_screen_y * self.map_shift_pos.1) as f64 - 2.0,
-        4.0,
-        4.0,
-      );
+      contexts[MAIN_LAYER].fill_rect(screen_pos.0 - dot_size / 2.0, screen_pos.1 - dot_size / 2.0, dot_size, dot_size);
 
       return Ok(true);
     }

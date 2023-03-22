@@ -72,6 +72,7 @@ async function main() {
     const img = new Image();
     img.src = path;
     img.style.display = 'none';
+    img.style.imageRendering = 'pixelated';
     img.id = path;
     document.body.appendChild(img);
   }
