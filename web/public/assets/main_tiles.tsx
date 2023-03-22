@@ -86,7 +86,7 @@
  <tile id="20" class="nonsolid"/>
  <tile id="21" class="marker">
   <properties>
-   <property name="name" value="platform_lr"/>
+   <property name="name" value="moving_platform"/>
   </properties>
  </tile>
  <tile id="22" class="nonsolid">
@@ -113,11 +113,6 @@
  </tile>
  <tile id="27" class="nonsolid"/>
  <tile id="28" class="nonsolid"/>
- <tile id="29" class="marker">
-  <properties>
-   <property name="name" value="platform_ud"/>
-  </properties>
- </tile>
  <tile id="30" class="nonsolid">
   <properties>
    <property name="count" type="int" value="10"/>

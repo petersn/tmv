@@ -228,7 +228,7 @@ pub enum GameObjectData {
     y:               f32,
   },
   MovingPlatform {
-    velocity: Vec2,
+    orientation: Vec2,
   },
   Thwump {
     orientation: Vec2,
@@ -587,8 +587,9 @@ impl GameState {
                 self.touching_water = true;
               }
               GameObjectData::Lava { .. } => {
-                // FIXME: Properly handle lava.
-                take_damage!(self, 100);
+                if !self.char_state.power_ups.contains("lava") {
+                  take_damage!(self, 100);
+                }
               }
               GameObjectData::SavePoint => {
                 let save_point = &self.objects[&handle].physics_handle;
@@ -1161,6 +1162,7 @@ impl GameState {
                 "wall_jump" => "WJ",
                 "dash" => "D",
                 "water" => "W",
+                "lava" => "L",
                 _ => panic!("Unknown power up: {}", power_up),
               },
               (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
@@ -1236,7 +1238,7 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
-        GameObjectData::Thwump { orientation, state } => {
+        GameObjectData::Thwump { orientation, .. } | GameObjectData::MovingPlatform { orientation } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#666"));
           contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#222"));

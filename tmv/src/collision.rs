@@ -336,7 +336,7 @@ impl CollisionWorld {
                       },
                     );
                   }
-                  "thwump" => {
+                  "thwump" | "moving_platform" => {
                     let handle = self.new_cuboid(
                       PhysicsKind::Kinematic,
                       Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
@@ -349,9 +349,15 @@ impl CollisionWorld {
                       handle.collider,
                       GameObject {
                         physics_handle: handle,
-                        data:           GameObjectData::Thwump {
-                          orientation,
-                          state: crate::ThwumpState::Idle,
+                        data:           match name {
+                          "thwump" => GameObjectData::Thwump {
+                            orientation,
+                            state: crate::ThwumpState::Idle,
+                          },
+                          "moving_platform" => GameObjectData::MovingPlatform {
+                            orientation,
+                          },
+                          _ => unreachable!(),
                         },
                       },
                     );
