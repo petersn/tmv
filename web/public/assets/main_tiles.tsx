@@ -164,10 +164,14 @@
    <property name="powerup" value="dash"/>
   </properties>
  </tile>
+ <tile id="43" class="nonsolid"/>
+ <tile id="44" class="nonsolid"/>
  <tile id="47">
   <properties>
    <property name="count" type="int" value="10"/>
    <property name="name" value="coin_wall"/>
   </properties>
  </tile>
+ <tile id="51" class="nonsolid"/>
+ <tile id="52" class="nonsolid"/>
 </tileset>
