@@ -273,6 +273,7 @@ impl CollisionWorld {
                       Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
                       Vec2(0.6, 0.6),
                       0.05,
+                      false,
                       WALLS_INT_GROUPS,
                     );
                     objects.insert(
@@ -289,6 +290,7 @@ impl CollisionWorld {
                       Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
                       Vec2(1.0, 1.0),
                       0.05,
+                      false,
                       WALLS_INT_GROUPS,
                     );
                     objects.insert(
@@ -338,8 +340,9 @@ impl CollisionWorld {
                     let handle = self.new_cuboid(
                       PhysicsKind::Kinematic,
                       Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
-                      Vec2(1.5, 0.5),
+                      Vec2(3.0, 1.0),
                       0.05,
+                      false,
                       WALLS_INT_GROUPS,
                     );
                     objects.insert(
@@ -391,6 +394,38 @@ impl CollisionWorld {
       tiled::LayerType::ObjectLayer(object_layer) => {
         for object in object_layer.objects() {
           match &object.shape {
+            tiled::ObjectShape::Rect { width, height } => {
+              let name: &str = match object.properties.get("name") {
+                Some(tiled::PropertyValue::StringValue(s)) => s,
+                _ => panic!("Rects must have a name property that's a string."),
+              };
+              match name {
+                "interact" => {
+                  let interaction_number = match object.properties.get("interaction") {
+                    Some(tiled::PropertyValue::IntValue(i)) => *i,
+                    _ => panic!("interact rects must have an interaction property."),
+                  };
+                  crate::log(&format!("Rect: {}x{} @ ({}, {})", width, height, object.x, object.y));
+                  // Create a new cuboid collider for this interaction.
+                  let handle = self.new_cuboid(
+                    PhysicsKind::Sensor,
+                    Vec2((object.x + width / 2.0) / TILE_SIZE, (object.y + height / 2.0) / TILE_SIZE),
+                    Vec2(width / TILE_SIZE, height / TILE_SIZE),
+                    0.05,
+                    false,
+                    BASIC_INT_GROUPS,
+                  );
+                  objects.insert(
+                    handle.collider,
+                    GameObject {
+                      physics_handle: handle,
+                      data:           GameObjectData::Interaction { interaction_number },
+                    },
+                  );
+                }
+                _ => panic!("Unsupported rect name: {}", name),
+              }
+            }
             tiled::ObjectShape::Polyline { points } | tiled::ObjectShape::Polygon { points } => {
               //crate::log(&format!("Polygon: {:?} @ ({}, {})", points, object.x, object.y));
               let mut points =
@@ -541,6 +576,7 @@ impl CollisionWorld {
     position: Vec2,
     size: Vec2,
     rounding: f32,
+    is_sensor: bool,
     int_groups: InteractionGroups,
   ) -> PhysicsObjectHandle {
     let rigid_body = match kind {
@@ -554,6 +590,7 @@ impl CollisionWorld {
     let rigid_body = self.rigid_body_set.insert(rigid_body);
     let collider = self.collider_set.insert_with_parent(
       ColliderBuilder::round_cuboid(size.0 / 2.0 - rounding, size.1 / 2.0 - rounding, rounding)
+        .sensor(is_sensor)
         .collision_groups(int_groups),
       rigid_body,
       &mut self.rigid_body_set,

@@ -243,6 +243,9 @@ pub enum GameObjectData {
   },
   Stone,
   DestroyedDoor,
+  Interaction {
+    interaction_number: i32,
+  },
   DeleteMe,
 }
 
@@ -283,6 +286,7 @@ pub struct GameState {
   touching_water:            bool,
   submerged_in_water:        bool,
   air_remaining:             f32,
+  offered_interaction:       Option<i32>,
   damage_blink:              Cell<f32>,
   queued_damage_text:        Cell<Option<i32>>,
   suppress_air_meter:        bool,
@@ -344,6 +348,7 @@ impl GameState {
       collision.spawn_point,
       PLAYER_SIZE,
       0.25,
+      false,
       BASIC_INT_GROUPS,
     );
     char_state.save_point = collision.spawn_point;
@@ -375,6 +380,7 @@ impl GameState {
       touching_water: false,
       submerged_in_water: false,
       air_remaining: 0.0,
+      offered_interaction: None,
       damage_blink: Cell::new(0.0),
       queued_damage_text: Cell::new(None),
       suppress_air_meter: false,
@@ -410,6 +416,9 @@ impl GameState {
         if key == "Shift" {
           self.dash_hit = true;
         }
+        if key == "e" {
+          self.interact_hit = true;
+        }
         if key == " " && self.char_state.hp.get() <= 0 {
           self.respawn();
         }
@@ -437,6 +446,7 @@ impl GameState {
       self.char_state.save_point,
       PLAYER_SIZE,
       0.25,
+      false,
       BASIC_INT_GROUPS,
     );
   }
@@ -516,6 +526,7 @@ impl GameState {
 
     let filter = QueryFilter::default();
 
+    self.offered_interaction = None;
     self.touching_water = false;
     self.submerged_in_water = false;
     // Get the shape and pos of the player collider.
@@ -583,7 +594,10 @@ impl GameState {
                 _ => unreachable!(),
               },
               GameObjectData::Thwump { .. } => {
-                take_damage!(self, 100);
+                //take_damage!(self, 100);
+              }
+              GameObjectData::Interaction { interaction_number } => {
+                self.offered_interaction = Some(interaction_number);
               }
               GameObjectData::DestroyedDoor
               | GameObjectData::Stone
@@ -900,6 +914,14 @@ impl GameState {
       };
     }
 
+    if let Some(interaction) = self.offered_interaction {
+      if self.interact_hit {
+        self.interact_hit = false;
+        self.offered_interaction = None;
+        self.apply_interaction(interaction);
+      }
+    }
+
     self.jump_hit = false;
     self.dash_hit = false;
     self.interact_hit = false;
@@ -909,6 +931,15 @@ impl GameState {
     self.recently_blocked_to_right = (self.recently_blocked_to_right - dt).max(0.0);
     self.dash_time = (self.dash_time - dt).max(0.0);
     Ok(())
+  }
+
+  pub fn apply_interaction(&mut self, interaction: i32) {
+    match interaction {
+      1 => {
+        // FIXME: Implement this.
+      }
+      _ => panic!("Unknown interaction: {}", interaction),
+    }
   }
 
   pub fn draw_frame(&mut self) -> Result<bool, JsValue> {
@@ -1155,44 +1186,29 @@ impl GameState {
         }
         GameObjectData::Thwump { orientation, state } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
-          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#f00"));
-          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#800"));
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#666"));
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#222"));
           contexts[MAIN_LAYER].begin_path();
           contexts[MAIN_LAYER].rect(
-            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.45)) as f64,
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 1.45)) as f64,
             (TILE_SIZE * (pos.1 - self.camera_pos.1 - 0.45)) as f64,
-            (TILE_SIZE * 0.9) as f64,
-            (TILE_SIZE * 0.9) as f64,
+            (TILE_SIZE * 3.0) as f64,
+            (TILE_SIZE * 1.0) as f64,
           );
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
-          // Draw the thwump's eyes.
-          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#000"));
+          // Draw the damage side.
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#8cf"));
           contexts[MAIN_LAYER].begin_path();
-          contexts[MAIN_LAYER].rect(
-            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.25)) as f64,
-            (TILE_SIZE * (pos.1 - self.camera_pos.1 - 0.25)) as f64,
-            (TILE_SIZE * 0.2) as f64,
-            (TILE_SIZE * 0.2) as f64,
+          contexts[MAIN_LAYER].move_to(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 1.45)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 + 0.45)) as f64,
           );
-          contexts[MAIN_LAYER].fill();
-          contexts[MAIN_LAYER].begin_path();
-          contexts[MAIN_LAYER].rect(
-            (TILE_SIZE * (pos.0 - self.camera_pos.0 + 0.05)) as f64,
-            (TILE_SIZE * (pos.1 - self.camera_pos.1 - 0.25)) as f64,
-            (TILE_SIZE * 0.2) as f64,
-            (TILE_SIZE * 0.2) as f64,
+          contexts[MAIN_LAYER].line_to(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 + 1.45)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 + 0.45)) as f64,
           );
-          contexts[MAIN_LAYER].fill();
-          // Draw the thwump's mouth.
-          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#800"));
-          contexts[MAIN_LAYER].begin_path();
-          contexts[MAIN_LAYER].rect(
-            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.25)) as f64,
-            (TILE_SIZE * (pos.1 - self.camera_pos.1 + 0.05)) as f64,
-            (TILE_SIZE * 0.2) as f64,
-            (TILE_SIZE * 0.2) as f64,
-          );
+          contexts[MAIN_LAYER].stroke();
         }
         _ => {}
       }
@@ -1230,6 +1246,19 @@ impl GameState {
         contexts[MAIN_LAYER].fill();
         contexts[MAIN_LAYER].stroke();
       }
+    }
+
+    // If the user is offered an interaction, show it.
+    if let Some(interaction_number) = self.offered_interaction {
+      let text = match interaction_number {
+        1 => "Press E to shoot laser",
+        _ => "Unknown interaction!",
+      };
+      contexts[MAIN_LAYER].set_font("32px Arial");
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("white"));
+      contexts[MAIN_LAYER].set_text_align("left");
+      contexts[MAIN_LAYER].set_text_baseline("top");
+      contexts[MAIN_LAYER].fill_text(text, 10.0, 30.0).unwrap();
     }
 
     // // Draw all of the game objects.
