@@ -262,6 +262,18 @@ impl CollisionWorld {
                       },
                     );
                   }
+                  "beehive" => {
+                    let handle = make_circle(0.45);
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Beehive {
+                          cooldown: Cell::new(0.0),
+                        },
+                      },
+                    );
+                  }
                   "coin_wall" => {
                     let count: i32 = match base_tile.properties.get("count") {
                       Some(tiled::PropertyValue::IntValue(count)) => *count,

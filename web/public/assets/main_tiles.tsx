@@ -192,6 +192,12 @@
    <property name="powerup" value="lava"/>
   </properties>
  </tile>
+ <tile id="58" class="marker">
+  <properties>
+   <property name="name" value="powerup"/>
+   <property name="powerup" value="double_jump"/>
+  </properties>
+ </tile>
  <tile id="64" class="nonsolid">
   <properties>
    <property name="name" value="beehive"/>

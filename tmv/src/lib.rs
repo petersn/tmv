@@ -46,6 +46,9 @@ const HIGH_UNDERWATER_TIME: f32 = 24.0;
 const SCREEN_WIDTH: f32 = 1200.0;
 const SCREEN_HEIGHT: f32 = 800.0;
 const MAP_REVELATION_DISCRETIZATION: i32 = 8;
+const BEE_SIZE: f32 = 0.5;
+const BEE_ACCEL: f32 = 4.0;
+const BEE_TOP_SPEED: f32 = 5.0;
 //const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
@@ -260,6 +263,12 @@ pub enum GameObjectData {
   Interaction {
     interaction_number: i32,
   },
+  Beehive {
+    cooldown: Cell<f32>,
+  },
+  Bee {
+    lifespan: f32,
+  },
   DeleteMe,
 }
 
@@ -308,6 +317,7 @@ pub struct GameState {
   recently_blocked_to_right: f32,
   grounded_last_frame:       bool,
   grounded_recently:         f32,
+  have_double_jump:          bool,
   touching_water:            bool,
   submerged_in_water:        bool,
   air_remaining:             f32,
@@ -421,6 +431,7 @@ impl GameState {
       suppress_air_meter: false,
       grounded_last_frame: false,
       grounded_recently: 0.0,
+      have_double_jump: false,
       char_state: char_state.clone(),
       saved_char_state: char_state,
       objects,
@@ -548,6 +559,26 @@ impl GameState {
       GameObject {
         physics_handle,
         data: GameObjectData::Bullet { velocity },
+      },
+    );
+  }
+
+  fn create_bee(&mut self, location: Vec2, velocity: Vec2) {
+    let physics_handle = self.collision.new_circle(
+      collision::PhysicsKind::Dynamic,
+      location,
+      0.25,
+      false,
+      Some(InteractionGroups::new(
+        BASIC_GROUP,
+        WALLS_GROUP | PLAYER_GROUP,
+      )),
+    );
+    self.objects.insert(
+      physics_handle.collider,
+      GameObject {
+        physics_handle,
+        data: GameObjectData::Bee { lifespan: 12.0 },
       },
     );
   }
@@ -692,6 +723,11 @@ impl GameState {
                   object.data = GameObjectData::DeleteMe;
                 }
               }
+              GameObjectData::Bee { .. } => {
+                if self.char_state.hp.get() > 0 {
+                  take_damage!(self, 1);
+                }
+              }
               GameObjectData::Water => {
                 self.touching_water = true;
               }
@@ -724,6 +760,7 @@ impl GameState {
                 self.offered_interaction = Some(interaction_number);
               }
               GameObjectData::DestroyedDoor
+              | GameObjectData::Beehive { .. }
               | GameObjectData::VanishBlock { .. }
               | GameObjectData::Stone
               | GameObjectData::CoinWall { .. }
@@ -822,6 +859,38 @@ impl GameState {
               )
             }));
           }
+        }
+        GameObjectData::Beehive {
+          cooldown,
+        } => {
+          cooldown.set(cooldown.get() - dt);
+          if cooldown.get() <= 0.0 {
+            cooldown.set(2.0);
+            let physics_handle = object.physics_handle.clone();
+            calls.push(Box::new(move |this: &mut Self| {
+              this.create_bee(
+                this.collision.get_position(&physics_handle).unwrap() + Vec2(0.5, 0.5),
+                Vec2(0.0, 0.0),
+              )
+            }));
+          }
+        }
+        GameObjectData::Bee { lifespan } => {
+          *lifespan -= dt;
+          if *lifespan <= 0.0 {
+            object.data = GameObjectData::DeleteMe;
+          }
+          // FIXME: This is really hacky, but I'm making bees never go further right than -53.
+          let mut pos = self.collision.get_position(&object.physics_handle).unwrap();
+          if pos.0 > -53.0 {
+            pos.0 = -53.0;
+            self.collision.set_position(&object.physics_handle, pos);
+          }
+          // Randomly adjust the velocity a bit.
+          let mut velocity = self.collision.get_velocity(&object.physics_handle).unwrap();
+          velocity.0 = (velocity.0 + dt.sqrt() * BEE_ACCEL * (rand::random::<f32>() - 0.5)).clamp(-BEE_TOP_SPEED, BEE_TOP_SPEED);
+          velocity.1 = (velocity.1 + dt.sqrt() * BEE_ACCEL * (rand::random::<f32>() - 0.5)).clamp(-BEE_TOP_SPEED, BEE_TOP_SPEED);
+          self.collision.set_velocity(&object.physics_handle, velocity);
         }
         GameObjectData::Bullet { velocity } => {
           // If the object's velocity has changed, delete it.
@@ -1039,6 +1108,7 @@ impl GameState {
     if grounded {
       self.grounded_recently = JUMP_GRACE_PERIOD;
       self.have_dash = self.char_state.power_ups.contains("dash");
+      self.have_double_jump = self.char_state.power_ups.contains("double_jump");
     }
     // Allow wall jumps.
     let wall_jump_allowed = self.char_state.power_ups.contains("wall_jump")
@@ -1397,6 +1467,37 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
+        GameObjectData::Bee { lifespan } => {
+          // Draw a little yellow rectangle.
+          contexts[MAIN_LAYER].set_global_alpha(
+            (*lifespan).clamp(0.0, 1.0) as f64
+          );
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          let screen_pos = (
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - BEE_SIZE / 2.0)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 - BEE_SIZE / 2.0)) as f64,
+          );
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
+          contexts[MAIN_LAYER].fill_rect(
+            screen_pos.0,
+            screen_pos.1,
+            (BEE_SIZE * TILE_SIZE) as f64,
+            (BEE_SIZE * TILE_SIZE) as f64,
+          );
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#000"));
+          // Draw black stripes.
+          for i in 1..=3 {
+            let t = i as f32 / 4.0;
+            
+            contexts[MAIN_LAYER].fill_rect(
+              screen_pos.0 + (t * TILE_SIZE * BEE_SIZE as f32) as f64 - 1.0,
+              screen_pos.1,
+              2.0,
+              (BEE_SIZE * TILE_SIZE) as f64,
+            );
+          }
+          contexts[MAIN_LAYER].set_global_alpha(1.0);
+        }
         GameObjectData::HpUp { .. } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           // Draw a circle, with a different color outside.
@@ -1457,8 +1558,9 @@ impl GameState {
                 "wall_jump" => "WJ",
                 "dash" => "D",
                 "water" => "W",
-                "lava" => "L",
+                "lava" => "F",
                 "small" => "S",
+                "double_jump" => "DJ",
                 _ => panic!("Unknown power up: {}", power_up),
               },
               (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
@@ -1545,8 +1647,8 @@ impl GameState {
             contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str(&format!(
               "rgb({},{},{})",
               255 - (119.0 * vanish_timer.clamp(0.0, 1.0)) as i32,
-              136,
-              136,
+              136 - (136.0 * (1.0 - vanish_timer.clamp(0.0, 1.0))) as i32,
+              136 - (136.0 * (1.0 - vanish_timer.clamp(0.0, 1.0))) as i32,
             )));
             contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#444"));
           } else {
