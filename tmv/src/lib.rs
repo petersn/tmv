@@ -284,6 +284,8 @@ pub struct GameState {
   camera_pos:                Vec2,
   game_map:                  Rc<GameMap>,
   showing_map:               bool,
+  map_shift_pos:             Vec2,
+  map_zoom:                  f32,
   revealed_map:              HashSet<(i32, i32)>,
   collision:                 CollisionWorld,
   player_physics:            PhysicsObjectHandle,
@@ -385,6 +387,8 @@ impl GameState {
       camera_pos: Vec2::default(),
       game_map,
       showing_map: false,
+      map_shift_pos: Vec2::default(),
+      map_zoom: 1.0,
       revealed_map: HashSet::new(),
       collision,
       player_physics,
@@ -522,6 +526,24 @@ impl GameState {
 
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
     if self.showing_map {
+      if self.keys_held.contains("ArrowUp") {
+        self.map_shift_pos.1 -= 100.0 * self.map_zoom * dt;
+      }
+      if self.keys_held.contains("ArrowDown") {
+        self.map_shift_pos.1 += 100.0 * self.map_zoom * dt;
+      }
+      if self.keys_held.contains("ArrowLeft") {
+        self.map_shift_pos.0 -= 100.0 * self.map_zoom * dt;
+      }
+      if self.keys_held.contains("ArrowRight") {
+        self.map_shift_pos.0 += 100.0 * self.map_zoom * dt;
+      }
+      if self.keys_held.contains("PageUp") {
+        self.map_zoom *= 1.0 + 0.5 * dt;
+      }
+      if self.keys_held.contains("PageDown") {
+        self.map_zoom /= 1.0 + 0.5 * dt;
+      }
       return Ok(());
     }
 
@@ -1044,10 +1066,10 @@ impl GameState {
       contexts[MAIN_LAYER]
         .draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
           image,
-          0.0,
-          0.0,
-          image.width() as f64,
-          image.height() as f64,
+          self.map_shift_pos.0 as f64,
+          self.map_shift_pos.1 as f64,
+          (self.map_zoom * image.width() as f32) as f64,
+          (self.map_zoom * image.height() as f32) as f64,
           0.0,
           0.0,
           SCREEN_WIDTH as f64,
@@ -1060,6 +1082,8 @@ impl GameState {
         let map_y = (world_y - map_bounds.0 .1 as f32) / (map_bounds.1 .1 - map_bounds.0 .1) as f32 * SCREEN_HEIGHT;
         (map_x as f64, map_y as f64)
       };
+      let map_to_screen_x =  SCREEN_WIDTH as f32 / (self.map_zoom * image.width() as f32);
+        let map_to_screen_y =  SCREEN_HEIGHT as f32 / (self.map_zoom * image.height() as f32);
       // Black out everything that's not revealed.
       let mut chunk_y = map_bounds.0 .1;
       while chunk_y < map_bounds.1 .1 {
@@ -1073,10 +1097,10 @@ impl GameState {
             );
             contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#000"));
             contexts[MAIN_LAYER].fill_rect(
-              map_x - 1.0,
-              map_y - 1.0,
-              next_map_x - map_x + 2.0,
-              next_map_y - map_y + 2.0,
+              map_x - (map_to_screen_x * self.map_shift_pos.0) as f64 - 1.0,
+              map_y - (map_to_screen_y * self.map_shift_pos.1) as f64 - 1.0,
+              self.map_zoom as f64 * (next_map_x - map_x) + 2.0,
+              self.map_zoom as f64 * (next_map_y - map_y) + 2.0,
             );
           }
           chunk_x += MAP_REVELATION_DISCRETIZATION;
@@ -1088,8 +1112,8 @@ impl GameState {
       let (map_x, map_y) = world_xy_to_screen_xy(player_pos.0, player_pos.1);
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
       contexts[MAIN_LAYER].fill_rect(
-        map_x - 2.0,
-        map_y - 2.0,
+        map_x - (map_to_screen_x * self.map_shift_pos.0) as f64 - 2.0,
+        map_y - (map_to_screen_y * self.map_shift_pos.1) as f64 - 2.0,
         4.0,
         4.0,
       );
