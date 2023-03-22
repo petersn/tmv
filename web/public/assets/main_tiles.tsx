@@ -192,4 +192,12 @@
    <property name="powerup" value="lava"/>
   </properties>
  </tile>
+ <tile id="64" class="nonsolid">
+  <properties>
+   <property name="name" value="beehive"/>
+  </properties>
+ </tile>
+ <tile id="65" class="nonsolid"/>
+ <tile id="72" class="nonsolid"/>
+ <tile id="73" class="nonsolid"/>
 </tileset>
