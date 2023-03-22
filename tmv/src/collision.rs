@@ -397,7 +397,7 @@ impl CollisionWorld {
                         data:           GameObjectData::VanishBlock {
                           vanish_timer: 1.0,
                           is_solid:     true,
-                        }
+                        },
                       },
                     );
                   }
@@ -682,8 +682,8 @@ impl CollisionWorld {
     Some((collider.shape(), rigid_body.position()))
   }
 
-  pub fn move_object_with_character_controller(
-    &mut self,
+  pub fn check_character_controller_movement(
+    &self,
     dt: f32,
     handle: &PhysicsObjectHandle,
     shift: Vec2,
@@ -714,6 +714,22 @@ impl CollisionWorld {
         //.groups(InteractionGroups::new(Group::ALL, Group::GROUP_10))
         .exclude_rigid_body(handle.rigid_body.unwrap()),
       |_| {}, // We don’t care about events in this example.
+    );
+    corrected_movement
+  }
+
+  pub fn move_object_with_character_controller(
+    &mut self,
+    dt: f32,
+    handle: &PhysicsObjectHandle,
+    shift: Vec2,
+    drop_through_platforms: bool,
+  ) -> EffectiveCharacterMovement {
+    let corrected_movement = self.check_character_controller_movement(
+      dt,
+      handle,
+      shift,
+      drop_through_platforms,
     );
     // Move the object to the new position.
     self.shift_object(

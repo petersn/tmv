@@ -38,6 +38,7 @@ const MAIN_LAYER: usize = 1;
 const BACKGROUND_LAYER: usize = 2;
 const SCRATCH_LAYER: usize = 3;
 const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
+const SHRUNKEN_SIZE: Vec2 = Vec2(1.25, 0.9);
 const JUMP_GRACE_PERIOD: f32 = 0.1;
 const WALL_JUMP_GRACE: f32 = 0.3;
 const UNDERWATER_TIME: f32 = 8.0;
@@ -279,7 +280,7 @@ macro_rules! take_damage {
 
 #[derive(Serialize, Deserialize)]
 pub struct LocalStorageSaveData {
-  pub char_state: CharState,
+  pub char_state:   CharState,
   pub revealed_map: HashSet<(i32, i32)>,
 }
 
@@ -302,6 +303,7 @@ pub struct GameState {
   player_vel:                Vec2,
   have_dash:                 bool,
   dash_time:                 f32,
+  dash_origin:               Vec2,
   recently_blocked_to_left:  f32,
   recently_blocked_to_right: f32,
   grounded_last_frame:       bool,
@@ -318,6 +320,8 @@ pub struct GameState {
   objects:                   HashMap<ColliderHandle, GameObject>,
   death_animation:           f32,
   facing_right:              bool,
+  shrink_time:               f32,
+  shrunken:                  bool,
 
   // Data for specific interactions.
   int1_laser_time: f32,
@@ -405,6 +409,7 @@ impl GameState {
       player_vel: Vec2::default(),
       have_dash: false,
       dash_time: 0.0,
+      dash_origin: Vec2::default(),
       recently_blocked_to_left: 0.0,
       recently_blocked_to_right: 0.0,
       touching_water: false,
@@ -421,6 +426,8 @@ impl GameState {
       objects,
       death_animation: 0.0,
       facing_right: true,
+      shrink_time: 0.0,
+      shrunken: false,
       int1_laser_time: 0.0,
     })
   }
@@ -440,7 +447,7 @@ impl GameState {
   pub fn get_save_data(&self) -> String {
     // JSON serialize self.saved_char_state and self.revealed_map.
     let save_data = LocalStorageSaveData {
-      char_state: self.saved_char_state.clone(),
+      char_state:   self.saved_char_state.clone(),
       revealed_map: self.revealed_map.clone(),
     };
     serde_json::to_string(&save_data).unwrap()
@@ -487,6 +494,7 @@ impl GameState {
     self.death_animation = 0.0;
     self.damage_blink.set(0.0);
     self.player_vel = Vec2::default();
+    self.shrunken = false;
 
     self.objects = HashMap::new();
     //let collision = Collision::from_game_map(&game_map);
@@ -504,6 +512,22 @@ impl GameState {
     if self.char_state.int1_completed {
       self.interaction1_delete_stone();
     }
+  }
+
+  fn recreate_player_physics(&mut self) {
+    let old_player_position = self.collision.get_position(&self.player_physics);
+    self.collision.remove_object(self.player_physics.clone());
+    self.player_physics = self.collision.new_cuboid(
+      PhysicsKind::Sensor,
+      old_player_position.unwrap(),
+      match self.shrunken {
+        true => SHRUNKEN_SIZE,
+        false => PLAYER_SIZE,
+      },
+      0.25,
+      false,
+      BASIC_INT_GROUPS,
+    );
   }
 
   fn create_bullet(&mut self, location: Vec2, velocity: Vec2) {
@@ -572,8 +596,10 @@ impl GameState {
         self.map_zoom /= 20.0f32.powf(dt);
       }
       self.map_zoom = self.map_zoom.clamp(1.0, 10.0);
-      self.map_shift_pos.0 = self.map_shift_pos.0.clamp(0.5 / self.map_zoom, 1.0 - 0.5 / self.map_zoom);
-      self.map_shift_pos.1 = self.map_shift_pos.1.clamp(0.5 / self.map_zoom, 1.0 - 0.5 / self.map_zoom);
+      self.map_shift_pos.0 =
+        self.map_shift_pos.0.clamp(0.5 / self.map_zoom, 1.0 - 0.5 / self.map_zoom);
+      self.map_shift_pos.1 =
+        self.map_shift_pos.1.clamp(0.5 / self.map_zoom, 1.0 - 0.5 / self.map_zoom);
       return Ok(());
     }
 
@@ -713,7 +739,11 @@ impl GameState {
       );
       if self.touching_water {
         // If we're touching water, check if we're submerged.
-        let head_pos = Isometry::new(pos.translation.vector - Vector2::new(0.0, 1.0), 0.0);
+        let head_offset = match self.shrunken {
+          true => 0.1,
+          false => 1.0,
+        };
+        let head_pos = Isometry::new(pos.translation.vector - Vector2::new(0.0, head_offset), 0.0);
         let head_shape = Cuboid::new(Vector2::new(PLAYER_SIZE.0 / 2.0, 0.5));
         self.collision.query_pipeline.intersections_with_shape(
           &self.collision.rigid_body_set,
@@ -871,7 +901,10 @@ impl GameState {
             }));
           }
         }
-        GameObjectData::VanishBlock { vanish_timer, is_solid } => {
+        GameObjectData::VanishBlock {
+          vanish_timer,
+          is_solid,
+        } => {
           // Check the distance to the player.
           let block_pos = self.collision.get_position(&object.physics_handle).unwrap();
           let distance = (player_pos - block_pos).length();
@@ -1007,9 +1040,10 @@ impl GameState {
       self.grounded_recently = JUMP_GRACE_PERIOD;
       self.have_dash = self.char_state.power_ups.contains("dash");
     }
+    // Allow wall jumps.
     let wall_jump_allowed = self.char_state.power_ups.contains("wall_jump")
       && (self.recently_blocked_to_left > 0.0 || self.recently_blocked_to_right > 0.0);
-    if self.jump_hit && (self.grounded_recently > 0.0 || wall_jump_allowed) {
+    if !self.shrunken && self.jump_hit && (self.grounded_recently > 0.0 || wall_jump_allowed) {
       let abs_horizontal = self.player_vel.0.abs();
       let jump_multiplier = match water_movement {
         true => 0.5,
@@ -1034,13 +1068,49 @@ impl GameState {
       self.facing_right = false;
     }
 
-    if self.dash_hit && self.have_dash && self.dash_time <= 0.0 {
+    if !self.shrunken && self.dash_hit && self.have_dash && self.dash_time <= 0.0 {
+      // Perform a dash.
       self.have_dash = false;
       self.dash_time = 0.3;
+      self.dash_origin = player_pos;
       self.player_vel.0 = match self.facing_right {
         true => 100.0,
         false => -100.0,
       };
+    }
+    // Check if the player is trying to use shrink.
+    if !self.shrunken
+      && grounded
+      && self.keys_held.contains("ArrowDown")
+      && self.char_state.power_ups.contains("small")
+    {
+      self.shrink_time += dt;
+      if self.shrink_time > 0.25 {
+        self.shrunken = true;
+        self.recreate_player_physics();
+      }
+    } else {
+      self.shrink_time = 0.0;
+    }
+    if self.shrunken && self.keys_held.contains("ArrowUp") {
+      let stand_up_vector = Vec2(0.0, -(PLAYER_SIZE.1 - SHRUNKEN_SIZE.1));
+      // Check if the world is free right above us.
+      let stand_up_movement = self.collision.check_character_controller_movement(
+        1.0/60.0, // ficticious dt
+        &self.player_physics,
+        stand_up_vector,
+        false, // drop through platforms.
+      );
+      if stand_up_movement.translation.y <= stand_up_vector.1 + 0.01 {
+        self.collision.shift_object(&self.player_physics, Vec2(
+          0.0,
+          -(PLAYER_SIZE.1 - SHRUNKEN_SIZE.1) / 2.0,
+        ));
+        self.shrunken = false;
+        self.recreate_player_physics();
+      } else {
+        self.damage_blink.set(0.35);
+      }
     }
 
     if let Some(interaction) = self.offered_interaction {
@@ -1188,7 +1258,12 @@ impl GameState {
       let screen_pos = map_uv_to_screen(world_to_map_uv((player_pos.0, player_pos.1)));
       let dot_size = (4.0 * self.map_zoom).max(6.0) as f64;
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
-      contexts[MAIN_LAYER].fill_rect(screen_pos.0 - dot_size / 2.0, screen_pos.1 - dot_size / 2.0, dot_size, dot_size);
+      contexts[MAIN_LAYER].fill_rect(
+        screen_pos.0 - dot_size / 2.0,
+        screen_pos.1 - dot_size / 2.0,
+        dot_size,
+        dot_size,
+      );
 
       return Ok(true);
     }
@@ -1240,19 +1315,46 @@ impl GameState {
       }
     }
 
+    // If we're dashing, draw lines from self.dash_origin.
+    if self.dash_time > 0.0 {
+      for i in 0..6 {
+        let dy = 5.0 * (i as f32 - 2.5);
+        let t = [0.8, 0.4, 0.2, 0.2, 0.4, 0.8][i as usize];
+        let pos = self.dash_origin + t * (player_pos - self.dash_origin);
+        let width = player_pos.0 - pos.0;
+        let screen_pos = Vec2(
+          TILE_SIZE * (pos.0 - self.camera_pos.0),
+          TILE_SIZE * (pos.1 - self.camera_pos.1) + dy,
+        );
+        contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#fff"));
+        contexts[MAIN_LAYER].set_global_alpha((self.dash_time / 0.3).clamp(0.0, 1.0) as f64);
+        contexts[MAIN_LAYER].fill_rect(
+          screen_pos.0 as f64 - 1.0,
+          (screen_pos.1 + dy) as f64 - 1.5,
+          (TILE_SIZE * width) as f64,
+          3.0,
+        );
+        contexts[MAIN_LAYER].set_global_alpha(1.0);
+      }
+    }
+
     // Draw a red rectangle for the player.
     if self.damage_blink.get() % 0.2 > 0.1 {
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#f00"));
     } else {
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#800"));
     }
+    let current_player_height = match self.shrunken {
+      true => SHRUNKEN_SIZE.1,
+      false => PLAYER_SIZE.1,
+    };
     contexts[MAIN_LAYER].fill_rect(
       (TILE_SIZE * (player_pos.0 - self.camera_pos.0 - PLAYER_SIZE.0 / 2.0)) as f64,
       (TILE_SIZE
-        * (player_pos.1 - self.camera_pos.1 - PLAYER_SIZE.1 / 2.0 + 10.0 * self.death_animation))
+        * (player_pos.1 - self.camera_pos.1 - current_player_height / 2.0 + 10.0 * self.death_animation))
         as f64,
       (TILE_SIZE * PLAYER_SIZE.0) as f64,
-      (TILE_SIZE * (PLAYER_SIZE.1 - 10.0 * self.death_animation).max(0.0)) as f64,
+      (TILE_SIZE * (current_player_height - 10.0 * self.death_animation).max(0.0)) as f64,
     );
 
     // Draw all of the objects.
@@ -1356,6 +1458,7 @@ impl GameState {
                 "dash" => "D",
                 "water" => "W",
                 "lava" => "L",
+                "small" => "S",
                 _ => panic!("Unknown power up: {}", power_up),
               },
               (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
@@ -1431,7 +1534,10 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
-        GameObjectData::VanishBlock { vanish_timer, is_solid } => {
+        GameObjectData::VanishBlock {
+          vanish_timer,
+          is_solid,
+        } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           // If we're solid draw a block turning red.
           let mut size = 0.9;
