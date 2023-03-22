@@ -133,14 +133,18 @@ impl CollisionWorld {
                   )
                 };
                 let mut orientation = Vec2(1.0, 0.0);
+                let mut is_mirrored = false;
                 if tile.flip_d {
                   (orientation.0, orientation.1) = (orientation.1, orientation.0);
+                  is_mirrored ^= true;
                 }
                 if tile.flip_v {
                   orientation.1 *= -1.0;
+                  is_mirrored ^= true;
                 }
                 if tile.flip_h {
                   orientation.0 *= -1.0;
+                  is_mirrored ^= true;
                 }
                 let entity_id = 1_000_000 * tile_pos.1 + tile_pos.0;
                 match name {
@@ -326,6 +330,46 @@ impl CollisionWorld {
                         data:           GameObjectData::Platform {
                           currently_solid: true,
                           y:               tile_pos.1 as f32 + 0.3,
+                        },
+                      },
+                    );
+                  }
+                  "thwump" => {
+                    let handle = self.new_cuboid(
+                      PhysicsKind::Kinematic,
+                      Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5),
+                      Vec2(1.5, 0.5),
+                      0.05,
+                      WALLS_INT_GROUPS,
+                    );
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Thwump {
+                          orientation,
+                          state: crate::ThwumpState::Idle,
+                        },
+                      },
+                    );
+                  }
+                  "turn_laser" => {
+                    let laser_origin = Vec2(tile_pos.0 as f32 + 0.5, tile_pos.1 as f32 + 0.5);
+                    let handle = self.new_circle(
+                      PhysicsKind::Static,
+                      laser_origin,
+                      0.45,
+                      false,
+                      Some(WALLS_INT_GROUPS),
+                    );
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::TurnLaser {
+                          is_mirrored,
+                          angle: orientation.1.atan2(orientation.0),
+                          hit_point: laser_origin,
                         },
                       },
                     );

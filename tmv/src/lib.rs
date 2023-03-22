@@ -1,6 +1,7 @@
 use std::{
   cell::Cell,
   collections::{HashMap, HashSet},
+  mem::take,
   rc::Rc,
 };
 
@@ -13,7 +14,9 @@ use js_sys::Array;
 use math::{Rect, Vec2};
 use rapier2d::{
   na::Vector2,
-  prelude::{ColliderHandle, Cuboid, Group, InteractionGroups, Isometry, QueryFilter, Shape},
+  prelude::{
+    ColliderHandle, Cuboid, Group, InteractionGroups, Isometry, Point, QueryFilter, Ray, Shape,
+  },
 };
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
@@ -229,7 +232,14 @@ pub enum GameObjectData {
     state:       ThwumpState,
   },
   TurnLaser {
-    orientation: Vec2,
+    is_mirrored: bool,
+    angle:       f32,
+    hit_point:   Vec2,
+  },
+  FloatyText {
+    text:      String,
+    color:     String,
+    time_left: f32,
   },
   Stone,
   DestroyedDoor,
@@ -243,9 +253,10 @@ pub struct GameObject {
 
 macro_rules! take_damage {
   ($self: expr, $damage: expr) => {{
-    if $self.damage_blink.get() <= 0.0 {
+    if $self.damage_blink.get() <= 0.0 && $self.char_state.hp.get() > 0 {
       $self.char_state.hp.set($self.char_state.hp.get() - $damage);
       $self.damage_blink.set(1.0);
+      $self.queued_damage_text.set(Some($damage));
     }
   }};
 }
@@ -273,6 +284,7 @@ pub struct GameState {
   submerged_in_water:        bool,
   air_remaining:             f32,
   damage_blink:              Cell<f32>,
+  queued_damage_text:        Cell<Option<i32>>,
   suppress_air_meter:        bool,
   char_state:                CharState,
   saved_char_state:          CharState,
@@ -364,6 +376,7 @@ impl GameState {
       submerged_in_water: false,
       air_remaining: 0.0,
       damage_blink: Cell::new(0.0),
+      queued_damage_text: Cell::new(None),
       suppress_air_meter: false,
       grounded_last_frame: false,
       grounded_recently: 0.0,
@@ -391,7 +404,6 @@ impl GameState {
     let event: InputEvent = serde_json::from_str(event).to_js_error()?;
     match event {
       InputEvent::KeyDown { key } => {
-        crate::log(&format!("Key down: {}", key));
         if key == "ArrowUp" {
           self.jump_hit = true;
         }
@@ -440,8 +452,6 @@ impl GameState {
         WALLS_GROUP | PLAYER_GROUP,
       )),
     );
-    // Set the interaction group.
-
     // Set the velocity.
     self.collision.set_velocity(&physics_handle, velocity);
     self.objects.insert(
@@ -449,6 +459,29 @@ impl GameState {
       GameObject {
         physics_handle,
         data: GameObjectData::Bullet { velocity },
+      },
+    );
+  }
+
+  fn create_floaty_text(&mut self, location: Option<Vec2>, text: String, color: String) {
+    let physics_handle = self.collision.new_circle(
+      collision::PhysicsKind::Kinematic,
+      location.unwrap_or_else(|| self.collision.get_position(&self.player_physics).unwrap()),
+      0.25,
+      true,
+      Some(InteractionGroups::new(Group::NONE, Group::NONE)),
+    );
+    // Set the velocity.
+    self.collision.set_velocity(&physics_handle, Vec2(0.0, -1.0));
+    self.objects.insert(
+      physics_handle.collider,
+      GameObject {
+        physics_handle,
+        data: GameObjectData::FloatyText {
+          text,
+          color,
+          time_left: 2.0,
+        },
       },
     );
   }
@@ -518,7 +551,7 @@ impl GameState {
                 }
                 object.data = GameObjectData::DeleteMe;
               }
-              GameObjectData::Spike => take_damage!(self, 100),
+              GameObjectData::Spike => take_damage!(self, 2),
               GameObjectData::Bullet { .. } => {
                 if self.char_state.hp.get() > 0 {
                   take_damage!(self, 1);
@@ -549,10 +582,16 @@ impl GameState {
                 }
                 _ => unreachable!(),
               },
+              GameObjectData::Thwump { .. } => {
+                take_damage!(self, 100);
+              }
               GameObjectData::DestroyedDoor
               | GameObjectData::Stone
               | GameObjectData::CoinWall { .. }
               | GameObjectData::Shooter1 { .. }
+              | GameObjectData::TurnLaser { .. }
+              | GameObjectData::MovingPlatform { .. }
+              | GameObjectData::FloatyText { .. }
               | GameObjectData::DeleteMe => {}
             }
           }
@@ -586,6 +625,10 @@ impl GameState {
 
     // Process damage blink.
     self.damage_blink.set(self.damage_blink.get() - dt);
+    if let Some(amount) = self.queued_damage_text.get() {
+      self.create_floaty_text(None, format!("-{}", amount), "yellow".to_string());
+      self.queued_damage_text.set(None);
+    }
 
     // Process water submergence.
     if self.submerged_in_water {
@@ -650,6 +693,42 @@ impl GameState {
             *currently_solid = true;
           }
         }
+        GameObjectData::TurnLaser {
+          is_mirrored,
+          angle,
+          hit_point,
+        } => {
+          let sign = if *is_mirrored { 1.0 } else { -1.0 };
+          *angle = (*angle + dt * 1.0 * sign) % (2.0 * std::f32::consts::PI);
+          let physics_handle = object.physics_handle.clone();
+          let pos = self.collision.get_position(&physics_handle).unwrap();
+          // Compute a ray cast.
+          let ray = Ray::new(
+            Point::new(pos.0, pos.1),
+            Vector2::new(angle.cos(), angle.sin()),
+          );
+          let max_toi = 100.0;
+          let solid = true;
+          let filter =
+            QueryFilter::default().exclude_collider(physics_handle.collider).exclude_sensors();
+
+          if let Some((handle, toi)) = self.collision.query_pipeline.cast_ray(
+            &self.collision.rigid_body_set,
+            &self.collision.collider_set,
+            &ray,
+            max_toi,
+            solid,
+            filter,
+          ) {
+            // The first collider hit has the handle `handle` and it hit after
+            // the ray travelled a distance equal to `ray.dir * toi`.
+            let hp = ray.point_at(toi); // Same as: `ray.origin + ray.dir * toi`
+            *hit_point = Vec2(hp.x, hp.y);
+            if handle == self.player_physics.collider {
+              take_damage!(self, 2);
+            }
+          }
+        }
         GameObjectData::CoinWall { count } => {
           if self.char_state.coins.len() as i32 >= *count {
             crate::log(&format!("Deleting coin wall with {} coins", count));
@@ -671,6 +750,12 @@ impl GameState {
                 },
               );
             }));
+          }
+        }
+        GameObjectData::FloatyText { time_left, .. } => {
+          *time_left -= dt;
+          if *time_left <= 0.0 {
+            object.data = GameObjectData::DeleteMe;
           }
         }
         _ => {}
@@ -1001,6 +1086,59 @@ impl GameState {
             )
             .unwrap();
         }
+        GameObjectData::TurnLaser {
+          angle, hit_point, ..
+        } => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#777"));
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#222"));
+          contexts[MAIN_LAYER].set_line_width(5.0);
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER]
+            .arc(
+              (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+              (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+              (TILE_SIZE * 0.45) as f64,
+              0.0,
+              2.0 * std::f64::consts::PI,
+            )
+            .unwrap();
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].stroke();
+          // Draw the laser.
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#f00"));
+          contexts[MAIN_LAYER].set_line_width(5.0);
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].move_to(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+          );
+          contexts[MAIN_LAYER].line_to(
+            (TILE_SIZE * (hit_point.0 - self.camera_pos.0)) as f64,
+            (TILE_SIZE * (hit_point.1 - self.camera_pos.1)) as f64,
+          );
+          contexts[MAIN_LAYER].stroke();
+        }
+        GameObjectData::FloatyText {
+          text,
+          color,
+          time_left,
+        } => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          contexts[MAIN_LAYER].set_font("32px Arial");
+          contexts[MAIN_LAYER].set_text_align("center");
+          contexts[MAIN_LAYER].set_text_baseline("middle");
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str(color));
+          contexts[MAIN_LAYER].set_global_alpha(*time_left as f64);
+          contexts[MAIN_LAYER]
+            .fill_text(
+              text,
+              (TILE_SIZE * (pos.0 - self.camera_pos.0)) as f64,
+              (TILE_SIZE * (pos.1 - self.camera_pos.1)) as f64,
+            )
+            .unwrap();
+          contexts[MAIN_LAYER].set_global_alpha(1.0);
+        }
         GameObjectData::Stone => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#888"));
@@ -1014,6 +1152,47 @@ impl GameState {
           );
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
+        }
+        GameObjectData::Thwump { orientation, state } => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#f00"));
+          contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#800"));
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].rect(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.45)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 - 0.45)) as f64,
+            (TILE_SIZE * 0.9) as f64,
+            (TILE_SIZE * 0.9) as f64,
+          );
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].stroke();
+          // Draw the thwump's eyes.
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#000"));
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].rect(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.25)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 - 0.25)) as f64,
+            (TILE_SIZE * 0.2) as f64,
+            (TILE_SIZE * 0.2) as f64,
+          );
+          contexts[MAIN_LAYER].fill();
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].rect(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 + 0.05)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 - 0.25)) as f64,
+            (TILE_SIZE * 0.2) as f64,
+            (TILE_SIZE * 0.2) as f64,
+          );
+          contexts[MAIN_LAYER].fill();
+          // Draw the thwump's mouth.
+          contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#800"));
+          contexts[MAIN_LAYER].begin_path();
+          contexts[MAIN_LAYER].rect(
+            (TILE_SIZE * (pos.0 - self.camera_pos.0 - 0.25)) as f64,
+            (TILE_SIZE * (pos.1 - self.camera_pos.1 + 0.05)) as f64,
+            (TILE_SIZE * 0.2) as f64,
+            (TILE_SIZE * 0.2) as f64,
+          );
         }
         _ => {}
       }
