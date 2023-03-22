@@ -44,7 +44,7 @@ const UNDERWATER_TIME: f32 = 8.0;
 const HIGH_UNDERWATER_TIME: f32 = 16.0;
 const SCREEN_WIDTH: f32 = 1200.0;
 const SCREEN_HEIGHT: f32 = 800.0;
-const MAP_REVELATION_DISCRETIZATION: i32 = 16;
+const MAP_REVELATION_DISCRETIZATION: i32 = 8;
 //const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
@@ -192,12 +192,14 @@ impl Default for CharState {
   }
 }
 
+#[derive(Debug)]
 pub enum ThwumpState {
   Idle,
   Falling,
   Rising,
 }
 
+#[derive(Debug)]
 pub enum GameObjectData {
   Coin {
     entity_id: EntityId,
@@ -523,6 +525,7 @@ impl GameState {
       return Ok(());
     }
 
+
     self.int1_laser_time = (self.int1_laser_time - dt).max(0.0);
 
     //self.player_vel.1 += 1.0 * dt;
@@ -550,7 +553,19 @@ impl GameState {
     //   crate::log(&format!("Received trigger event: {:?}", contact_force_event));
     // }
 
-    let player_y = self.collision.get_position(&self.player_physics).unwrap().1;
+    let player_pos = self.collision.get_position(&self.player_physics).unwrap();
+    let player_y = player_pos.1;
+
+    let mrd = MAP_REVELATION_DISCRETIZATION;
+    let map_view_chunk = (
+      (player_pos.0 / mrd as f32).floor() as i32 * mrd,
+      (player_pos.1 / mrd as f32).floor() as i32 * MAP_REVELATION_DISCRETIZATION,
+    );
+    for dx in [-mrd, 0, mrd] {
+      for dy in [-mrd, 0, mrd] {
+        self.revealed_map.insert((map_view_chunk.0 + dx, map_view_chunk.1 + dy));
+      }
+    }
 
     let filter = QueryFilter::default();
 
@@ -566,7 +581,9 @@ impl GameState {
         shape,
         filter,
         |handle| {
+          //crate::log(&format!("Touching: {:?}", handle));
           if let Some(object) = self.objects.get_mut(&handle) {
+            //crate::log(&format!("Touching object: {:?}", object.data));
             match object.data {
               GameObjectData::Coin { entity_id } => {
                 object.data = GameObjectData::DeleteMe;
@@ -1037,17 +1054,34 @@ impl GameState {
           SCREEN_HEIGHT as f64,
         )
         .unwrap();
-      let world_xy_to_screen_xy = |world_x: f64, world_y: f64| {
-        let map_bounds = ((-176, -112), (240, 208));
-        let map_x = (world_x - map_bounds.0 .0 as f64) / (map_bounds.1 .0 - map_bounds.0 .0) as f64 * SCREEN_WIDTH as f64;
-        let map_y = (world_y - map_bounds.0 .1 as f64) / (map_bounds.1 .1 - map_bounds.0 .1) as f64 * SCREEN_HEIGHT as f64;
-        (map_x, map_y)
+      let map_bounds = ((-176, -112), (240, 208));
+      let world_xy_to_screen_xy = |world_x: f32, world_y: f32| {
+        let map_x = (world_x - map_bounds.0 .0 as f32) / (map_bounds.1 .0 - map_bounds.0 .0) as f32 * SCREEN_WIDTH;
+        let map_y = (world_y - map_bounds.0 .1 as f32) / (map_bounds.1 .1 - map_bounds.0 .1) as f32 * SCREEN_HEIGHT;
+        (map_x as f64, map_y as f64)
       };
       // Black out everything that's not revealed.
-      for chunk_y in 0..y_chunk_count {
-        for chunk_x in 0..x_chunk_count {
-          if !self.revealed_chunk
+      let mut chunk_y = map_bounds.0 .1;
+      while chunk_y < map_bounds.1 .1 {
+        let mut chunk_x = map_bounds.0 .0;
+        while chunk_x < map_bounds.1 .0 {
+          if !self.revealed_map.contains(&(chunk_x, chunk_y)) {
+            let (map_x, map_y) = world_xy_to_screen_xy(chunk_x as f32, chunk_y as f32);
+            let (next_map_x, next_map_y) = world_xy_to_screen_xy(
+              (chunk_x + MAP_REVELATION_DISCRETIZATION) as f32,
+              (chunk_y + MAP_REVELATION_DISCRETIZATION) as f32,
+            );
+            contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#000"));
+            contexts[MAIN_LAYER].fill_rect(
+              map_x - 1.0,
+              map_y - 1.0,
+              next_map_x - map_x + 2.0,
+              next_map_y - map_y + 2.0,
+            );
+          }
+          chunk_x += MAP_REVELATION_DISCRETIZATION;
         }
+        chunk_y += MAP_REVELATION_DISCRETIZATION;
       }
       // Draw where we are.
       let player_pos = self.collision.get_position(&self.player_physics).unwrap_or(Vec2(0.0, 0.0));
