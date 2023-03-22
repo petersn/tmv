@@ -538,10 +538,10 @@ impl GameState {
       if self.keys_held.contains("ArrowRight") {
         self.map_shift_pos.0 += 100.0 * self.map_zoom * dt;
       }
-      if self.keys_held.contains("PageUp") {
+      if self.keys_held.contains("z") {
         self.map_zoom *= 1.0 + 0.5 * dt;
       }
-      if self.keys_held.contains("PageDown") {
+      if self.keys_held.contains("x") {
         self.map_zoom /= 1.0 + 0.5 * dt;
       }
       return Ok(());
