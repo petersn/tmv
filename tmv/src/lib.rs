@@ -39,10 +39,12 @@ const BACKGROUND_LAYER: usize = 2;
 const SCRATCH_LAYER: usize = 3;
 const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
 const JUMP_GRACE_PERIOD: f32 = 0.1;
+const WALL_JUMP_GRACE: f32 = 0.3;
 const UNDERWATER_TIME: f32 = 8.0;
 const HIGH_UNDERWATER_TIME: f32 = 16.0;
 const SCREEN_WIDTH: f32 = 1200.0;
 const SCREEN_HEIGHT: f32 = 800.0;
+const MAP_REVELATION_DISCRETIZATION: i32 = 16;
 //const PLAYER_SIZE: Vec2 = Vec2(3.0, 3.0);
 
 pub trait IntoJsError {
@@ -70,6 +72,7 @@ impl<T> IntoJsError for Option<T> {
 pub enum ImageResource {
   WorldProperties,
   MainTiles,
+  MapSmall,
 }
 
 impl ImageResource {
@@ -77,6 +80,7 @@ impl ImageResource {
     match self {
       ImageResource::WorldProperties => "/assets/images/colors_tileset.png",
       ImageResource::MainTiles => "/assets/images/main_tiles.png",
+      ImageResource::MapSmall => "/assets/images/map_small.png",
     }
   }
 
@@ -177,12 +181,12 @@ impl CharState {
 impl Default for CharState {
   fn default() -> Self {
     Self {
-      save_point: Vec2::default(),
-      hp:         Cell::new(1),
-      power_ups:  HashSet::new(),
-      coins:      HashSet::new(),
-      rare_coins: HashSet::new(),
-      hp_ups:     HashSet::new(),
+      save_point:     Vec2::default(),
+      hp:             Cell::new(1),
+      power_ups:      HashSet::new(),
+      coins:          HashSet::new(),
+      rare_coins:     HashSet::new(),
+      hp_ups:         HashSet::new(),
       int1_completed: false,
     }
   }
@@ -277,6 +281,8 @@ pub struct GameState {
   interact_hit:              bool,
   camera_pos:                Vec2,
   game_map:                  Rc<GameMap>,
+  showing_map:               bool,
+  revealed_map:              HashSet<(i32, i32)>,
   collision:                 CollisionWorld,
   player_physics:            PhysicsObjectHandle,
   player_vel:                Vec2,
@@ -300,7 +306,7 @@ pub struct GameState {
   facing_right:              bool,
 
   // Data for specific interactions.
-  int1_laser_time:           f32,
+  int1_laser_time: f32,
 }
 
 #[wasm_bindgen]
@@ -376,6 +382,8 @@ impl GameState {
       interact_hit: false,
       camera_pos: Vec2::default(),
       game_map,
+      showing_map: false,
+      revealed_map: HashSet::new(),
       collision,
       player_physics,
       player_vel: Vec2::default(),
@@ -417,7 +425,7 @@ impl GameState {
     let event: InputEvent = serde_json::from_str(event).to_js_error()?;
     match event {
       InputEvent::KeyDown { key } => {
-        if key == "ArrowUp" {
+        if key == "ArrowUp" || key == "z" {
           self.jump_hit = true;
         }
         if key == "Shift" {
@@ -425,6 +433,9 @@ impl GameState {
         }
         if key == "e" {
           self.interact_hit = true;
+        }
+        if key == "m" {
+          self.showing_map ^= true;
         }
         if key == " " && self.char_state.hp.get() <= 0 {
           self.respawn();
@@ -508,6 +519,10 @@ impl GameState {
   }
 
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
+    if self.showing_map {
+      return Ok(());
+    }
+
     self.int1_laser_time = (self.int1_laser_time - dt).max(0.0);
 
     //self.player_vel.1 += 1.0 * dt;
@@ -845,7 +860,10 @@ impl GameState {
       self.player_vel.0 *= horizontal_decay_factor;
     }
 
-    if self.player_vel.1 < 0.0 && !self.keys_held.contains("ArrowUp") {
+    if self.player_vel.1 < 0.0
+      && !self.keys_held.contains("ArrowUp")
+      && !self.keys_held.contains("z")
+    {
       self.player_vel.1 *= 0.01f32.powf(dt);
     }
 
@@ -885,11 +903,11 @@ impl GameState {
     let blocked_to_top =
       self.player_vel.1 < 0.0 && effective_motion.translation.y > dt * self.player_vel.1 * 0.95;
     if blocked_to_left {
-      self.recently_blocked_to_left = 0.2;
+      self.recently_blocked_to_left = WALL_JUMP_GRACE;
       self.player_vel.0 = self.player_vel.0.max(0.0);
     }
     if blocked_to_right {
-      self.recently_blocked_to_right = 0.2;
+      self.recently_blocked_to_right = WALL_JUMP_GRACE;
       self.player_vel.0 = self.player_vel.0.min(0.0);
     }
     if blocked_to_top {
@@ -968,9 +986,7 @@ impl GameState {
           self.interaction1_delete_stone();
         }
       }
-      2 => {
-
-      }
+      2 => {}
       _ => panic!("Unknown interaction: {}", interaction),
     }
   }
@@ -993,6 +1009,7 @@ impl GameState {
     }
   }
 
+  // FIXME: I don't remember what this return value is supposed to signify.
   pub fn draw_frame(&mut self) -> Result<bool, JsValue> {
     let DrawContext {
       canvases,
@@ -1000,6 +1017,52 @@ impl GameState {
       images,
       tile_renderer,
     } = &mut self.draw_context;
+
+    if self.showing_map {
+      // Fill the main layer with red.
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#334"));
+      contexts[MAIN_LAYER].fill_rect(0.0, 0.0, SCREEN_WIDTH as f64, SCREEN_HEIGHT as f64);
+      // Copy over from the map image.
+      let image = &images[&ImageResource::MapSmall];
+      contexts[MAIN_LAYER]
+        .draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+          image,
+          0.0,
+          0.0,
+          image.width() as f64,
+          image.height() as f64,
+          0.0,
+          0.0,
+          SCREEN_WIDTH as f64,
+          SCREEN_HEIGHT as f64,
+        )
+        .unwrap();
+      let world_xy_to_screen_xy = |world_x: f64, world_y: f64| {
+        let map_bounds = ((-176, -112), (240, 208));
+        let map_x = (world_x - map_bounds.0 .0 as f64) / (map_bounds.1 .0 - map_bounds.0 .0) as f64 * SCREEN_WIDTH as f64;
+        let map_y = (world_y - map_bounds.0 .1 as f64) / (map_bounds.1 .1 - map_bounds.0 .1) as f64 * SCREEN_HEIGHT as f64;
+        (map_x, map_y)
+      };
+      // Black out everything that's not revealed.
+      for chunk_y in 0..y_chunk_count {
+        for chunk_x in 0..x_chunk_count {
+          if !self.revealed_chunk
+        }
+      }
+      // Draw where we are.
+      let player_pos = self.collision.get_position(&self.player_physics).unwrap_or(Vec2(0.0, 0.0));
+      let (map_x, map_y) = world_xy_to_screen_xy(player_pos.0, player_pos.1);
+      contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
+      contexts[MAIN_LAYER].fill_rect(
+        map_x - 2.0,
+        map_y - 2.0,
+        4.0,
+        4.0,
+      );
+
+      return Ok(true);
+    }
+
     // contexts[BACKGROUND_LAYER].begin_path();
     // contexts[BACKGROUND_LAYER].move_to(10.0, 10.0);
     // contexts[BACKGROUND_LAYER].line_to(100.0 * rand::random::<f64>(), 100.0);
@@ -1238,7 +1301,8 @@ impl GameState {
           contexts[MAIN_LAYER].fill();
           contexts[MAIN_LAYER].stroke();
         }
-        GameObjectData::Thwump { orientation, .. } | GameObjectData::MovingPlatform { orientation } => {
+        GameObjectData::Thwump { orientation, .. }
+        | GameObjectData::MovingPlatform { orientation } => {
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#666"));
           contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#222"));

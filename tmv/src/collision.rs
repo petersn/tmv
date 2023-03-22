@@ -354,9 +354,7 @@ impl CollisionWorld {
                             orientation,
                             state: crate::ThwumpState::Idle,
                           },
-                          "moving_platform" => GameObjectData::MovingPlatform {
-                            orientation,
-                          },
+                          "moving_platform" => GameObjectData::MovingPlatform { orientation },
                           _ => unreachable!(),
                         },
                       },
@@ -411,11 +409,17 @@ impl CollisionWorld {
                     Some(tiled::PropertyValue::IntValue(i)) => *i,
                     _ => panic!("interact rects must have an interaction property."),
                   };
-                  crate::log(&format!("Rect: {}x{} @ ({}, {})", width, height, object.x, object.y));
+                  crate::log(&format!(
+                    "Rect: {}x{} @ ({}, {})",
+                    width, height, object.x, object.y
+                  ));
                   // Create a new cuboid collider for this interaction.
                   let handle = self.new_cuboid(
                     PhysicsKind::Sensor,
-                    Vec2((object.x + width / 2.0) / TILE_SIZE, (object.y + height / 2.0) / TILE_SIZE),
+                    Vec2(
+                      (object.x + width / 2.0) / TILE_SIZE,
+                      (object.y + height / 2.0) / TILE_SIZE,
+                    ),
                     Vec2(width / TILE_SIZE, height / TILE_SIZE),
                     0.05,
                     false,
