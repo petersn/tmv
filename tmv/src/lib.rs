@@ -547,7 +547,6 @@ impl GameState {
       return Ok(());
     }
 
-
     self.int1_laser_time = (self.int1_laser_time - dt).max(0.0);
 
     //self.player_vel.1 += 1.0 * dt;
@@ -1077,21 +1076,23 @@ impl GameState {
         )
         .unwrap();
       let map_bounds = ((-176, -112), (240, 208));
-      let world_xy_to_screen_xy = |world_x: f32, world_y: f32| {
-        let map_x = (world_x - map_bounds.0 .0 as f32) / (map_bounds.1 .0 - map_bounds.0 .0) as f32 * SCREEN_WIDTH;
-        let map_y = (world_y - map_bounds.0 .1 as f32) / (map_bounds.1 .1 - map_bounds.0 .1) as f32 * SCREEN_HEIGHT;
+      let world_xy_to_map_xy = |world_x: f32, world_y: f32| {
+        let map_x = (world_x - map_bounds.0 .0 as f32) / (map_bounds.1 .0 - map_bounds.0 .0) as f32
+          * SCREEN_WIDTH;
+        let map_y = (world_y - map_bounds.0 .1 as f32) / (map_bounds.1 .1 - map_bounds.0 .1) as f32
+          * SCREEN_HEIGHT;
         (map_x as f64, map_y as f64)
       };
-      let map_to_screen_x =  SCREEN_WIDTH as f32 / (self.map_zoom * image.width() as f32);
-        let map_to_screen_y =  SCREEN_HEIGHT as f32 / (self.map_zoom * image.height() as f32);
+      let map_to_screen_x = SCREEN_WIDTH as f32 / (self.map_zoom * image.width() as f32);
+      let map_to_screen_y = SCREEN_HEIGHT as f32 / (self.map_zoom * image.height() as f32);
       // Black out everything that's not revealed.
       let mut chunk_y = map_bounds.0 .1;
       while chunk_y < map_bounds.1 .1 {
         let mut chunk_x = map_bounds.0 .0;
         while chunk_x < map_bounds.1 .0 {
           if !self.revealed_map.contains(&(chunk_x, chunk_y)) {
-            let (map_x, map_y) = world_xy_to_screen_xy(chunk_x as f32, chunk_y as f32);
-            let (next_map_x, next_map_y) = world_xy_to_screen_xy(
+            let (map_x, map_y) = world_xy_to_map_xy(chunk_x as f32, chunk_y as f32);
+            let (next_map_x, next_map_y) = world_xy_to_map_xy(
               (chunk_x + MAP_REVELATION_DISCRETIZATION) as f32,
               (chunk_y + MAP_REVELATION_DISCRETIZATION) as f32,
             );
@@ -1109,7 +1110,7 @@ impl GameState {
       }
       // Draw where we are.
       let player_pos = self.collision.get_position(&self.player_physics).unwrap_or(Vec2(0.0, 0.0));
-      let (map_x, map_y) = world_xy_to_screen_xy(player_pos.0, player_pos.1);
+      let (map_x, map_y) = world_xy_to_map_xy(player_pos.0, player_pos.1);
       contexts[MAIN_LAYER].set_fill_style(&JsValue::from_str("#ff0"));
       contexts[MAIN_LAYER].fill_rect(
         map_x - (map_to_screen_x * self.map_shift_pos.0) as f64 - 2.0,
