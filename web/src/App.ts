@@ -1,5 +1,7 @@
 import init, { get_wasm_version, get_all_image_paths, get_all_resource_names, GameState } from 'tmv';
 
+const ROOT = '/mv/';
+
 var gameState: GameState | null = null;
 
 let frameTimes: number[] = [];
@@ -80,7 +82,7 @@ async function main() {
   console.log('Loading images:', allImagePaths);
   for (const path of allImagePaths) {
     const img = new Image();
-    img.src = path;
+    img.src = ROOT + path;
     img.style.display = 'none';
     img.style.imageRendering = 'pixelated';
     img.id = path;
@@ -91,7 +93,7 @@ async function main() {
   const allResourceNames = get_all_resource_names();
   console.log('Loading resources:', allResourceNames);
   const resourcePromises = allResourceNames.map((name: string) => {
-    return fetch(name).then((res) => res.arrayBuffer()).then((buf) => {
+    return fetch(ROOT + name).then((res) => res.arrayBuffer()).then((buf) => {
       console.log(`Loaded resource ${name}: ${buf.byteLength} bytes`);
       return { name, buf };
     });
