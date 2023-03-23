@@ -1319,7 +1319,7 @@ impl GameState {
       // *) screen coordinates (ranging from 0 to 1000ish)
 
       let map_size = (image.width() as f32, image.height() as f32);
-      let map_bounds = ((-160, -112), (240, 160));
+      let map_bounds = ((-168, -120), (240, 160));
 
       let world_to_map_uv = |(world_x, world_y): (f32, f32)| {
         let uv_x = (world_x - map_bounds.0 .0 as f32) / (map_bounds.1 .0 - map_bounds.0 .0) as f32;
