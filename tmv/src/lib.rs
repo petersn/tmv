@@ -711,6 +711,11 @@ impl GameState {
                   GameObjectData::PowerUp { power_up } => {
                     crate::log(&format!("Got power up: {:?}", power_up));
                     self.char_state.power_ups.insert(power_up.clone());
+                    // If we got the water powerup, refresh air immediately.
+                    if power_up == "water" {
+                      self.air_remaining = HIGH_UNDERWATER_TIME;
+                      self.suppress_air_meter = false;
+                    }
                   }
                   _ => unreachable!(),
                 }
@@ -884,8 +889,18 @@ impl GameState {
           let mut pos = self.collision.get_position(&object.physics_handle).unwrap();
           if pos.0 > -53.0 {
             pos.0 = -53.0;
-            self.collision.set_position(&object.physics_handle, pos);
           }
+          // These keep the bees out of water.
+          if pos.1 > 12.5 {
+            pos.1 = 12.5;
+          }
+          if pos.0 < -120.0 && pos.1 > 11.5 {
+            pos.1 = 11.5;
+          }
+          if pos.0 < -142.0 && pos.1 > 6.5 {
+            pos.1 = 6.5;
+          }
+          self.collision.set_position(&object.physics_handle, pos, false);
           // Randomly adjust the velocity a bit.
           let mut velocity = self.collision.get_velocity(&object.physics_handle).unwrap();
           velocity.0 = (velocity.0 + dt.sqrt() * BEE_ACCEL * (rand::random::<f32>() - 0.5)).clamp(-BEE_TOP_SPEED, BEE_TOP_SPEED);
@@ -1113,19 +1128,23 @@ impl GameState {
     // Allow wall jumps.
     let wall_jump_allowed = self.char_state.power_ups.contains("wall_jump")
       && (self.recently_blocked_to_left > 0.0 || self.recently_blocked_to_right > 0.0);
-    if !self.shrunken && self.jump_hit && (self.grounded_recently > 0.0 || wall_jump_allowed) {
+    if !self.shrunken && self.jump_hit && (self.grounded_recently > 0.0 || wall_jump_allowed || self.have_double_jump) {
       let abs_horizontal = self.player_vel.0.abs();
       let jump_multiplier = match water_movement {
         true => 0.5,
         false => 1.0,
       };
       self.player_vel.1 = (-22.0 - 0.2 * abs_horizontal) * jump_multiplier;
-      if self.grounded_recently <= 0.0 {
+      // Check if we're wall jumping for free.
+      if wall_jump_allowed && self.grounded_recently <= 0.0 {
         if self.recently_blocked_to_left > 0.0 {
           self.player_vel.0 = max_horiz_speed;
         } else if self.recently_blocked_to_right > 0.0 {
           self.player_vel.0 = -max_horiz_speed;
         }
+      } else if self.grounded_recently <= 0.0 {
+        // Check if we're double jumping.
+        self.have_double_jump = false;
       }
       self.grounded_recently = 0.0;
       self.recently_blocked_to_left = 0.0;

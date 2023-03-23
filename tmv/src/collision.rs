@@ -319,6 +319,7 @@ impl CollisionWorld {
                     self.set_position(
                       &handle,
                       Vec2(tile_pos.0 as f32 + 1.0, tile_pos.1 as f32 + 0.5),
+                      true,
                     );
                     objects.insert(
                       handle.collider,
@@ -668,10 +669,12 @@ impl CollisionWorld {
     Some(Vec2(position.x, position.y))
   }
 
-  pub fn set_position(&mut self, handle: &PhysicsObjectHandle, position: Vec2) {
+  pub fn set_position(&mut self, handle: &PhysicsObjectHandle, position: Vec2, zero_linvel: bool) {
     let rigid_body = self.rigid_body_set.get_mut(handle.rigid_body.unwrap()).unwrap();
     rigid_body.set_translation(Vector2::new(position.0, position.1), true);
-    rigid_body.set_linvel(Vector2::zeros(), true);
+    if zero_linvel {
+      rigid_body.set_linvel(Vector2::zeros(), true);
+    }
   }
 
   pub fn get_velocity(&self, handle: &PhysicsObjectHandle) -> Option<Vec2> {
