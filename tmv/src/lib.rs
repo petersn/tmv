@@ -40,7 +40,7 @@ const SCRATCH_LAYER: usize = 3;
 const PLAYER_SIZE: Vec2 = Vec2(1.25, 2.5);
 const SHRUNKEN_SIZE: Vec2 = Vec2(1.25, 0.9);
 const JUMP_GRACE_PERIOD: f32 = 0.1;
-const WALL_JUMP_GRACE: f32 = 0.3;
+const WALL_JUMP_GRACE: f32 = 0.24;
 const UNDERWATER_TIME: f32 = 8.0;
 const HIGH_UNDERWATER_TIME: f32 = 24.0;
 const SCREEN_WIDTH: f32 = 1200.0;
@@ -1254,6 +1254,7 @@ impl GameState {
           self.interaction2_delete_stone();
         }
       }
+      3 => {}
       _ => panic!("Unknown interaction: {}", interaction),
     }
   }
@@ -1828,6 +1829,7 @@ impl GameState {
       let text = match interaction_number {
         1 => "Press E to shoot laser",
         2 => "Press E to shoot laser",
+        3 => "You win the game!",
         _ => "Unknown interaction!",
       };
       contexts[MAIN_LAYER].set_font("32px Arial");

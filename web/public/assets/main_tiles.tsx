@@ -171,9 +171,15 @@
  </tile>
  <tile id="43" class="nonsolid"/>
  <tile id="44" class="nonsolid"/>
- <tile id="47">
+ <tile id="46" class="nonsolid">
   <properties>
-   <property name="count" type="int" value="10"/>
+   <property name="count" type="int" value="15"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="47" class="nonsolid">
+  <properties>
+   <property name="count" type="int" value="15"/>
    <property name="name" value="coin_wall"/>
   </properties>
  </tile>
