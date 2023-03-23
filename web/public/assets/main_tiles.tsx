@@ -209,6 +209,10 @@
   </properties>
  </tile>
  <tile id="65" class="nonsolid"/>
+ <tile id="67" class="nonsolid"/>
+ <tile id="68" class="nonsolid"/>
  <tile id="72" class="nonsolid"/>
  <tile id="73" class="nonsolid"/>
+ <tile id="75" class="nonsolid"/>
+ <tile id="76" class="nonsolid"/>
 </tileset>
