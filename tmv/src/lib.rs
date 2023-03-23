@@ -1001,9 +1001,9 @@ impl GameState {
           let block_pos = self.collision.get_position(&object.physics_handle).unwrap();
           let distance = (player_pos - block_pos).length();
           if distance < 2.0 || (*is_solid && *vanish_timer < 1.0) {
-            *vanish_timer = (*vanish_timer - dt * 1.0).max(0.0);
+            *vanish_timer = (*vanish_timer - dt * 1.2).max(0.0);
           } else {
-            *vanish_timer = (*vanish_timer + dt / 3.0).min(1.0);
+            *vanish_timer = (*vanish_timer + dt / 2.5).min(1.0);
           }
           if *vanish_timer <= 0.0 {
             // Disable collision on our collider.
@@ -1312,7 +1312,7 @@ impl GameState {
       // *) screen coordinates (ranging from 0 to 1000ish)
 
       let map_size = (image.width() as f32, image.height() as f32);
-      let map_bounds = ((-176, -112), (240, 208));
+      let map_bounds = ((-160, -112), (240, 160));
 
       let world_to_map_uv = |(world_x, world_y): (f32, f32)| {
         let uv_x = (world_x - map_bounds.0 .0 as f32) / (map_bounds.1 .0 - map_bounds.0 .0) as f32;

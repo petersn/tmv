@@ -61,6 +61,16 @@ function onKeyUp(e: KeyboardEvent) {
   }
 }
 
+let savingInterval: any = null;
+
+(window as any).clearProgress = function() {
+  if (window.confirm('Are you sure you want to completely restart the game?')) {
+    clearInterval(savingInterval);
+    localStorage.removeItem('pmvSaveData');
+    window.location.reload();
+  }
+}
+
 async function main() {
   await init();
   console.log('Hello, world: ' + get_wasm_version());
@@ -96,10 +106,10 @@ async function main() {
     gameState = new GameState(resources);
     const pmvSaveData = localStorage.getItem('pmvSaveData');
     if (pmvSaveData !== null) {
-      //gameState.apply_save_data(pmvSaveData);
+      gameState.apply_save_data(pmvSaveData);
     }
     // FIXME: There's no need to save so frequently, but also it doesn't matter?
-    setInterval(() => {
+    savingInterval = setInterval(() => {
       const saveData = gameState!.get_save_data();
       localStorage.setItem('pmvSaveData', saveData);
     }, 500);
