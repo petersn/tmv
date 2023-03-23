@@ -197,6 +197,18 @@
  </tile>
  <tile id="51" class="nonsolid"/>
  <tile id="52" class="nonsolid"/>
+ <tile id="54" class="nonsolid">
+  <properties>
+   <property name="count" type="int" value="30"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
+ <tile id="55" class="nonsolid">
+  <properties>
+   <property name="count" type="int" value="30"/>
+   <property name="name" value="coin_wall"/>
+  </properties>
+ </tile>
  <tile id="57" class="marker">
   <properties>
    <property name="name" value="powerup"/>
