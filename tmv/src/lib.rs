@@ -165,7 +165,7 @@ pub enum InputEvent {
 
 pub type EntityId = i32;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CharState {
   pub save_point:     Vec2,
   pub hp:             Cell<i32>,
@@ -688,6 +688,7 @@ impl GameState {
     self.offered_interaction = None;
     self.touching_water = false;
     self.submerged_in_water = false;
+    let mut just_saved = false;
     // Get the shape and pos of the player collider.
     if let Some((shape, pos)) = self.collision.get_shape_and_position(&self.player_physics) {
       self.collision.query_pipeline.intersections_with_shape(
@@ -754,6 +755,9 @@ impl GameState {
                 self.char_state.save_point =
                   self.collision.get_position(save_point).unwrap() + Vec2(0.0, -1.0);
                 self.char_state.reset_hp();
+                if self.char_state != self.saved_char_state {
+                  just_saved = true;
+                }
                 self.saved_char_state = self.char_state.clone();
               }
               // Let the player drop through platforms they're colliding with.
@@ -816,6 +820,9 @@ impl GameState {
           },
         );
       }
+    }
+    if just_saved {
+      self.create_floaty_text(None, "Saved!".to_string(), "yellow".to_string());
     }
     let water_movement = self.touching_water && !self.char_state.power_ups.contains("water");
 
