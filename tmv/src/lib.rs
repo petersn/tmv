@@ -174,6 +174,7 @@ pub struct CharState {
   pub rare_coins:     HashSet<EntityId>,
   pub hp_ups:         HashSet<EntityId>,
   pub int1_completed: bool,
+  pub int2_completed: bool,
 }
 
 impl CharState {
@@ -192,6 +193,7 @@ impl Default for CharState {
       rare_coins:     HashSet::new(),
       hp_ups:         HashSet::new(),
       int1_completed: false,
+      int2_completed: false,
     }
   }
 }
@@ -335,6 +337,7 @@ pub struct GameState {
 
   // Data for specific interactions.
   int1_laser_time: f32,
+  int2_laser_time: f32,
 }
 
 #[wasm_bindgen]
@@ -440,6 +443,7 @@ impl GameState {
       shrink_time: 0.0,
       shrunken: false,
       int1_laser_time: 0.0,
+      int2_laser_time: 0.0,
     })
   }
 
@@ -522,6 +526,9 @@ impl GameState {
     // FIXME: This should maybe also run on the initial load.
     if self.char_state.int1_completed {
       self.interaction1_delete_stone();
+    }
+    if self.char_state.int2_completed {
+      self.interaction2_delete_stone();
     }
   }
 
@@ -635,6 +642,7 @@ impl GameState {
     }
 
     self.int1_laser_time = (self.int1_laser_time - dt).max(0.0);
+    self.int2_laser_time = (self.int2_laser_time - dt).max(0.0);
 
     //self.player_vel.1 += 1.0 * dt;
     // let (new_player_pos, collision_happened) = self.collision.try_move_rect(Rect {
@@ -1211,7 +1219,11 @@ impl GameState {
     }
 
     // If the laser is firing, and we're high enough up to get hit, take damage.
+    // FIXME: These are so hacky.
     if self.int1_laser_time > 0.0 && player_y < 1070.0 / TILE_SIZE {
+      take_damage!(self, 999999);
+    }
+    if self.int2_laser_time > 0.0 && player_pos.0 > 40.0 && player_y < 93.5 {
       take_damage!(self, 999999);
     }
 
@@ -1235,7 +1247,13 @@ impl GameState {
           self.interaction1_delete_stone();
         }
       }
-      2 => {}
+      2 => {
+        if self.int2_laser_time <= 0.0 {
+          self.int2_laser_time = 0.6;
+          self.char_state.int2_completed = true;
+          self.interaction2_delete_stone();
+        }
+      }
       _ => panic!("Unknown interaction: {}", interaction),
     }
   }
@@ -1250,6 +1268,20 @@ impl GameState {
           let max_y = 38.0;
           let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
           if pos.0 >= min_x && pos.0 <= max_x && pos.1 >= min_y && pos.1 <= max_y {
+            object.data = GameObjectData::DeleteMe;
+          }
+        }
+        _ => {}
+      }
+    }
+  }
+
+  pub fn interaction2_delete_stone(&mut self) {
+    for object in self.objects.values_mut() {
+      match &mut object.data {
+        GameObjectData::Stone => {
+          let pos = self.collision.get_position(&object.physics_handle).unwrap_or(Vec2(0.0, 0.0));
+          if pos.1 >= 90.0 {
             object.data = GameObjectData::DeleteMe;
           }
         }
@@ -1720,8 +1752,11 @@ impl GameState {
       }
     }
 
-    if self.int1_laser_time > 0.0 {
-      let laser_origin = (1200.0, 1024.0);
+    if self.int1_laser_time > 0.0 || self.int2_laser_time > 0.0 {
+      let (laser_origin, laser_dx, laser_angle) = match self.int1_laser_time > 0.0 {
+        true => ((1200.0, 1024.0), -800.0, std::f32::consts::PI),
+        false => ((1275.0, 3024.0), 800.0, 0.0),
+      };
       // Draw the laser.
       contexts[MAIN_LAYER].set_stroke_style(&JsValue::from_str("#ff0"));
       contexts[MAIN_LAYER].set_line_width(20.0 * self.int1_laser_time as f64);
@@ -1731,13 +1766,13 @@ impl GameState {
         (laser_origin.1 - self.camera_pos.1 * TILE_SIZE) as f64,
       );
       contexts[MAIN_LAYER].line_to(
-        (laser_origin.0 - self.camera_pos.0 * TILE_SIZE - 800.0) as f64,
+        (laser_origin.0 - self.camera_pos.0 * TILE_SIZE + laser_dx) as f64,
         (laser_origin.1 - self.camera_pos.1 * TILE_SIZE) as f64,
       );
       contexts[MAIN_LAYER].stroke();
       contexts[MAIN_LAYER].set_line_width(10.0 * self.int1_laser_time as f64);
       for _ in 0..12 {
-        let angle = (rand::random::<f32>() - 0.5) * 1.0 + std::f32::consts::PI;
+        let angle = (rand::random::<f32>() - 0.5) * 1.0 + laser_angle;
         let distance = (40.0 + rand::random::<f32>() * 120.0) * self.int1_laser_time;
         let endpoint = (
           (laser_origin.0 - self.camera_pos.0 * TILE_SIZE + angle.cos() * distance) as f64,
@@ -1791,7 +1826,7 @@ impl GameState {
     if let Some(interaction_number) = self.offered_interaction {
       let text = match interaction_number {
         1 => "Press E to shoot laser",
-        2 => "Press E to activate machine",
+        2 => "Press E to shoot laser",
         _ => "Unknown interaction!",
       };
       contexts[MAIN_LAYER].set_font("32px Arial");
