@@ -257,7 +257,21 @@ impl CollisionWorld {
                         data:           GameObjectData::Shooter1 {
                           orientation,
                           cooldown: Cell::new(1.25),
-                          shoot_period: 1.25,
+                          shoot_period: 1.4,
+                        },
+                      },
+                    );
+                  }
+                  "shooter2" => {
+                    let handle = make_circle(0.45);
+                    objects.insert(
+                      handle.collider,
+                      GameObject {
+                        physics_handle: handle,
+                        data:           GameObjectData::Shooter1 {
+                          orientation,
+                          cooldown: Cell::new(1.25),
+                          shoot_period: 2.0,
                         },
                       },
                     );

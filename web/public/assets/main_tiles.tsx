@@ -146,6 +146,11 @@
    <property name="name" value="turn_laser"/>
   </properties>
  </tile>
+ <tile id="36" class="nonsolid">
+  <properties>
+   <property name="name" value="shooter2"/>
+  </properties>
+ </tile>
  <tile id="38" class="nonsolid">
   <properties>
    <property name="count" type="int" value="20"/>
