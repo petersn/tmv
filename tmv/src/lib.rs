@@ -615,16 +615,16 @@ impl GameState {
 
   pub fn step(&mut self, dt: f32) -> Result<(), JsValue> {
     if self.showing_map {
-      if self.keys_held.contains("ArrowUp") {
+      if self.keys_held.contains("ArrowUp") || self.keys_held.contains("w") {
         self.map_shift_pos.1 -= 1.5 / self.map_zoom * dt;
       }
-      if self.keys_held.contains("ArrowDown") {
+      if self.keys_held.contains("ArrowDown") || self.keys_held.contains("s") {
         self.map_shift_pos.1 += 1.5 / self.map_zoom * dt;
       }
-      if self.keys_held.contains("ArrowLeft") {
+      if self.keys_held.contains("ArrowLeft") || self.keys_held.contains("a") {
         self.map_shift_pos.0 -= 1.5 / self.map_zoom * dt;
       }
-      if self.keys_held.contains("ArrowRight") {
+      if self.keys_held.contains("ArrowRight") || self.keys_held.contains("d") {
         self.map_shift_pos.0 += 1.5 / self.map_zoom * dt;
       }
       if self.keys_held.contains("z") {
@@ -1071,12 +1071,12 @@ impl GameState {
       true => 0.2,
       false => 1.0,
     };
-    if self.keys_held.contains("ArrowLeft") {
+    if self.keys_held.contains("ArrowLeft") || self.keys_held.contains("a") {
       self.player_vel.0 -= horizontal_dv * dt;
     } else if self.player_vel.0 < 0.0 && self.dash_time <= 0.0 {
       self.player_vel.0 *= horizontal_decay_factor;
     }
-    if self.keys_held.contains("ArrowRight") {
+    if self.keys_held.contains("ArrowRight") || self.keys_held.contains("d") {
       self.player_vel.0 += horizontal_dv * dt;
     } else if self.player_vel.0 > 0.0 && self.dash_time <= 0.0 {
       self.player_vel.0 *= horizontal_decay_factor;
@@ -1084,6 +1084,7 @@ impl GameState {
 
     if self.player_vel.1 < 0.0
       && !self.keys_held.contains("ArrowUp")
+      && !self.keys_held.contains("w")
       && !self.keys_held.contains("z")
     {
       self.player_vel.1 *= 0.01f32.powf(dt);
@@ -1109,7 +1110,7 @@ impl GameState {
       &self.player_physics,
       dt * self.player_vel,
       // drop through platforms
-      self.keys_held.contains("ArrowDown"),
+      self.keys_held.contains("ArrowDown") || self.keys_held.contains("s"),
     );
     // For some reason effective_motion.grounded seems to always be false,
     // so we instead consider ourselves grounded if we didn't move the full requested amount in y.
@@ -1185,7 +1186,7 @@ impl GameState {
     // Check if the player is trying to use shrink.
     if !self.shrunken
       && grounded
-      && self.keys_held.contains("ArrowDown")
+      && (self.keys_held.contains("ArrowDown") || self.keys_held.contains("s"))
       && self.char_state.power_ups.contains("small")
     {
       self.shrink_time += dt;
@@ -1196,7 +1197,7 @@ impl GameState {
     } else {
       self.shrink_time = 0.0;
     }
-    if self.shrunken && self.keys_held.contains("ArrowUp") {
+    if self.shrunken && (self.keys_held.contains("ArrowUp") || self.keys_held.contains("w")) {
       let stand_up_vector = Vec2(0.0, -(PLAYER_SIZE.1 - SHRUNKEN_SIZE.1));
       // Check if the world is free right above us.
       let stand_up_movement = self.collision.check_character_controller_movement(
