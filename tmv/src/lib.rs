@@ -480,7 +480,7 @@ impl GameState {
     let event: InputEvent = serde_json::from_str(event).to_js_error()?;
     match event {
       InputEvent::KeyDown { key } => {
-        if key == "ArrowUp" || key == "z" {
+        if key == "ArrowUp" || key == "w" || key == "z" {
           self.jump_hit = true;
         }
         if key == "Shift" {
